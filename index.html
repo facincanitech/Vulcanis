@@ -195,7 +195,7 @@
 </head>
 <body>
 
-<div id="versionTag">VulcaniS — protótipo v0.6</div>
+<div id="versionTag">VulcaniS — protótipo v0.7</div>
 <div id="welcomeScreen">
   <h1>Bem-vindo a Vulcanis</h1>
   <div class="hint">Um mundo de tribos, evolução e um vulcão que nunca é 100% previsível.</div>
@@ -1294,7 +1294,7 @@
     // câmera top-down levemente angulada. zoom=0 -> visão geral das 4 regiões; zoom=1 -> aproxima do centro do mapa
     const t = THREE.MathUtils.clamp(zoom, 0, 1);
     const eased = t*t*(3-2*t);
-    const dist = THREE.MathUtils.lerp(540, 25, eased);
+    const dist = THREE.MathUtils.lerp(420, 25, eased);
     camera.position.set(0, dist*0.9, dist);
     camera.lookAt(0, 0, 0);
   }
