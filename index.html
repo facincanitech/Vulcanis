@@ -195,7 +195,7 @@
 </head>
 <body>
 
-<div id="versionTag">VulcaniS — protótipo v0.8</div>
+<div id="versionTag">VulcaniS — protótipo v0.9</div>
 <div id="welcomeScreen">
   <h1>Bem-vindo a Vulcanis</h1>
   <div class="hint">Um mundo de tribos, evolução e um vulcão que nunca é 100% previsível.</div>
@@ -702,7 +702,7 @@
   REGIONS.forEach((region, regionIndex) => {
     // o vulcão já tá desenhado na imagem — aqui só o nome flutuando em cima dele
     // (marcadores de cor das tribos ficam escondidos nessa tela — só aparecem dentro da região)
-    const label = makeTextSprite(region.name, { fontSize:40 });
+    const label = makeTextSprite(region.name, { fontSize:40, scale:2.2 });
     label.position.set(region.cx, 40, region.cz);
     planetScene.add(label);
   });
