@@ -259,7 +259,7 @@
 </head>
 <body>
 
-<div id="versionTag">VulcaniS — protótipo v0.26</div>
+<div id="versionTag">VulcaniS — protótipo v0.27</div>
 <div id="welcomeScreen">
   <h1>Bem-vindo a Vulcanis</h1>
   <div class="hint">Um mundo de tribos, evolução e um vulcão que nunca é 100% previsível.</div>
@@ -1730,6 +1730,137 @@
     catch (e) { console.warn('delete player_sessions falhou:', e); }
   }
 
+  // ---------- BOTS: linhas normais em player_sessions (player_id "bot_..."), simulados por quem estiver
+  // presente na região — não é IA de servidor de verdade, é o cliente de algum jogador "hospedando" o bot.
+  // Só vagam e atacam com uma arma fraca fixa; sem gather/craft (isso exigiria toda uma economia própria pro bot).
+  const BOT_MAX_HP = 60;
+  const BOT_DAMAGE_MULT = 0.55;
+  const BOT_WEAPON = 'Porrete de Pedra';
+  const BOT_MOVE_SPEED = 30;
+  const BOT_AGGRO_RANGE = 70;
+  const BOT_ATTACK_RANGE = 20;
+  const BOT_TICK_INTERVAL = 3;
+  const BOT_ID_PREFIX = 'bot_'; // toda linha de bot usa esse prefixo no player_id, pra distinguir de jogador de verdade
+  let botTickTimer = 0;
+  let botStates = {}; // botId -> { wanderTarget:{x,z} } — só relevante em quem tá hospedando no momento
+
+  function botIdForTribe(regionIndex, tribeIndex){
+    return `${BOT_ID_PREFIX}r${regionIndex}_t${tribeIndex}`;
+  }
+
+  // completa o rolê: 1 bot em cada uma das outras 3 tribos, não na sua — só pra ter alguém pra
+  // interagir/lutar mesmo jogando sozinho. Upsert com ignoreDuplicates: chamar de novo não reseta bot já
+  // vivo, e não duplica mesmo se dois jogadores de tribos diferentes entrarem e chamarem ao mesmo tempo
+  async function ensureBotsSpawned(regionIndex, myTribeIndex){
+    if (!sb) return;
+    const half = GAMEPLAY_REGION_SIZE/2 - CORNER_MARGIN;
+    const otherTribes = [0,1,2,3].filter(t => t !== myTribeIndex);
+    const rows = otherTribes.map(tribeIdx => ({
+      player_id: botIdForTribe(regionIndex, tribeIdx),
+      player_name: `Bot ${TRIBE_NAMES[tribeIdx]}`,
+      region_index: regionIndex,
+      tribe_index: tribeIdx,
+      x: THREE.MathUtils.randFloatSpread(half*1.6),
+      z: THREE.MathUtils.randFloatSpread(half*1.6),
+      hp: BOT_MAX_HP,
+      equipped_weapon: BOT_WEAPON,
+      equipped_armor: null,
+      last_seen: new Date().toISOString(),
+    }));
+    try {
+      await sb.from('player_sessions').upsert(rows, { onConflict: 'player_id', ignoreDuplicates: true });
+    } catch (e) { console.warn('spawn bots falhou:', e); }
+  }
+
+  // eleição simples e determinística: entre todos os jogadores humanos presentes na região (eu + quem
+  // apareceu no último fetch), quem tiver o menor player_id "hospeda" os bots naquele momento
+  function isBotHostNow(){
+    const humanIds = [myPlayerId, ...Object.keys(otherPlayers).filter(id => !id.startsWith(BOT_ID_PREFIX))];
+    humanIds.sort();
+    return humanIds[0] === myPlayerId;
+  }
+
+  function computeBotDamage(targetArmorName){
+    const weaponTool = toolByName(BOT_WEAPON);
+    const baseDmg = weaponTool && weaponTool.dmg ? weaponTool.dmg : 8;
+    const defTool = toolByName(targetArmorName);
+    const def = defTool && defTool.def ? defTool.def : 0;
+    return Math.max(1, Math.round((baseDmg - def) * BOT_DAMAGE_MULT));
+  }
+
+  // acha o inimigo mais próximo de um bot — considera outros jogadores remotos E o jogador local (que não
+  // aparece em otherPlayers por ser o próprio)
+  function findBotTarget(botTribe, botPos){
+    let target = null, bestDist = Infinity;
+    Object.entries(otherPlayers).forEach(([oid, o]) => {
+      if (oid.startsWith(BOT_ID_PREFIX) || o.tribe === botTribe || !(o.hp > 0)) return;
+      const d = botPos.distanceTo(o.mesh.position);
+      if (d <= BOT_AGGRO_RANGE && d < bestDist) { bestDist = d; target = { isLocal:false, id:oid, pos:o.mesh.position, armor:o.armor }; }
+    });
+    if (player && scene === 'gameplay' && currentTribeIndex !== botTribe && currentHp > 0) {
+      const d = botPos.distanceTo(player.position);
+      if (d <= BOT_AGGRO_RANGE && d < bestDist) { bestDist = d; target = { isLocal:true, id:myPlayerId, pos:player.position, armor:itemNameFromKey(equippedArmor) }; }
+    }
+    return target ? { target, dist: bestDist } : null;
+  }
+
+  async function applyBotDamage(target, dmg){
+    if (target.isLocal) {
+      currentHp = Math.max(0, currentHp - dmg);
+      showGatherMsg(`💥 Um bot te acertou! -${dmg} HP`);
+      updateGameHud();
+      if (currentHp <= 0) handlePlayerDeath();
+      return;
+    }
+    const rp = otherPlayers[target.id];
+    const newHp = Math.max(0, (rp ? rp.hp : 100) - dmg);
+    if (rp) rp.hp = newHp;
+    if (!sb) return;
+    try { await sb.from('player_sessions').update({ hp: newHp }).eq('player_id', target.id); }
+    catch (e) { console.warn('dano de bot falhou:', e); }
+  }
+
+  // roda só em quem "hospeda" os bots agora — decide movimento/ataque de cada um e escreve no banco.
+  // acha os bots pelos que já apareceram no fetch normal de otherPlayers (prefixo "bot_"), em vez de gerar
+  // o ID de novo — o time deles foi decidido no spawn e pode não bater com a tribo de quem tá hospedando agora
+  async function tickBotsAsHost(){
+    if (!sb || !gameplayScene) return;
+    const half = GAMEPLAY_REGION_SIZE/2 - CORNER_MARGIN;
+    const botIds = Object.keys(otherPlayers).filter(id => id.startsWith(BOT_ID_PREFIX));
+    for (const id of botIds) {
+      const bot = otherPlayers[id];
+      if (!bot || !(bot.hp > 0)) continue;
+      let state = botStates[id];
+      if (!state) state = botStates[id] = { wanderTarget: null };
+
+      const found = findBotTarget(bot.tribe, bot.mesh.position);
+      let newX = bot.mesh.position.x, newZ = bot.mesh.position.z;
+
+      if (found && found.dist <= BOT_ATTACK_RANGE) {
+        await applyBotDamage(found.target, computeBotDamage(found.target.armor));
+      } else if (found) {
+        const dir = new THREE.Vector3().subVectors(found.target.pos, bot.mesh.position).normalize();
+        newX += dir.x * BOT_MOVE_SPEED * BOT_TICK_INTERVAL;
+        newZ += dir.z * BOT_MOVE_SPEED * BOT_TICK_INTERVAL;
+      } else {
+        if (!state.wanderTarget || Math.hypot(state.wanderTarget.x - bot.mesh.position.x, state.wanderTarget.z - bot.mesh.position.z) < 10) {
+          state.wanderTarget = { x: THREE.MathUtils.randFloatSpread(half*1.6), z: THREE.MathUtils.randFloatSpread(half*1.6) };
+        }
+        const dir = new THREE.Vector3(state.wanderTarget.x - bot.mesh.position.x, 0, state.wanderTarget.z - bot.mesh.position.z).normalize();
+        newX += dir.x * BOT_MOVE_SPEED * 0.5 * BOT_TICK_INTERVAL;
+        newZ += dir.z * BOT_MOVE_SPEED * 0.5 * BOT_TICK_INTERVAL;
+      }
+
+      newX = THREE.MathUtils.clamp(newX, -half, half);
+      newZ = THREE.MathUtils.clamp(newZ, -half, half);
+      bot.mesh.position.set(newX, 0, newZ);
+      if (!sb) continue;
+      try {
+        await sb.from('player_sessions').update({ x:newX, z:newZ, last_seen:new Date().toISOString() }).eq('player_id', id);
+      } catch (e) { console.warn('mover bot falhou:', e); }
+    }
+  }
+
   async function fetchRegionCounts(regionIndex){
     if (!sb) { updateTribeSelectCounts({ total:0, byTribe:[0,0,0,0] }); return; }
     try {
@@ -1953,6 +2084,8 @@
       allBarricadePoints = [];
       seenStructureIds = new Set();
       structureFetchTimer = 0;
+      botStates = {};
+      botTickTimer = 0;
 
       scene = 'gameplay';
       gameplayZoom = 1.8; // já começa afastado
@@ -1971,6 +2104,7 @@
       upsertPlayerSession(regionIndex, tribeIndex, player.position.x, player.position.z);
       fetchOtherPlayersInRegion(regionIndex);
       fetchRegionStructures(regionIndex);
+      ensureBotsSpawned(regionIndex, tribeIndex);
 
       // o ponto de luz cresce, revelando a cena — como saindo de dentro da caverna
       caveLightEl.style.transition = 'width 1.1s ease-out, height 1.1s ease-out';
@@ -2858,6 +2992,13 @@
     if (structureFetchTimer >= STRUCTURE_FETCH_INTERVAL) {
       structureFetchTimer = 0;
       fetchRegionStructures(currentRegionIndex);
+    }
+
+    // bots: só quem "hospeda" no momento (eleição determinística) realmente simula — o resto só vê/lê
+    botTickTimer += dt;
+    if (botTickTimer >= BOT_TICK_INTERVAL) {
+      botTickTimer = 0;
+      if (isBotHostNow()) tickBotsAsHost();
     }
 
     // câmera travada no personagem — sem lerp, sem lag, sem guinada. só a distância muda com o scroll.
