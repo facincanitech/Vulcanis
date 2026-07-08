@@ -45,12 +45,18 @@
     background:rgba(0,0,0,0.5); padding:10px 14px; border-radius:6px; display:none;
     z-index:10; max-width:280px; max-height:92vh; overflow-y:auto; line-height:1.5;
   }
-  #gameHud button { font-family:monospace; font-size:12px; cursor:pointer; margin-top:4px; }
   #exitGameBtn {
     position:fixed; bottom:14px; left:14px; font-family:monospace; font-size:12px;
     background:rgba(0,0,0,0.5); color:#eaf6ff; border:1px solid #667; padding:8px 12px;
     border-radius:6px; cursor:pointer; display:none; z-index:10;
   }
+  .screenShortcutBtn {
+    position:fixed; left:14px; font-family:monospace; font-size:13px; font-weight:bold;
+    background:rgba(0,0,0,0.5); color:#eaf6ff; border:1px solid #667; padding:9px 16px;
+    border-radius:6px; cursor:pointer; display:none; z-index:10;
+  }
+  #skillShortcutBtn { top:150px; }
+  #invShortcutBtn   { top:196px; }
   #gatherMsg {
     position:fixed; bottom:16px; left:50%; transform:translateX(-50%); color:#fff2cc;
     font-family:monospace; background:rgba(0,0,0,0.45); padding:6px 12px; border-radius:6px;
@@ -132,11 +138,13 @@
   <button id="tribeCancel">Cancelar</button>
 </div>
 <div id="gameHud"></div>
+<button id="skillShortcutBtn" class="screenShortcutBtn" onclick="window.__vulcanisOpenSkill()">Skilltree</button>
+<button id="invShortcutBtn" class="screenShortcutBtn" onclick="window.__vulcanisOpenInv()">Inventário</button>
 <button id="exitGameBtn">Sair da região (ESC)</button>
 <div id="gatherMsg"></div>
 <div id="skillScreen" class="screenOverlay">
   <div id="skillPanel" class="screenPanel">
-    <h2>Skilltree [T]</h2>
+    <h2>Skilltree [N]</h2>
     <div class="hint">Clique nos quadrados pra desbloquear a receita. Desbloqueando todos os itens da era, a próxima abre.</div>
     <div id="skillBody"></div>
     <button class="screenCloseBtn" onclick="window.__vulcanisCloseScreens()">Fechar (ESC)</button>
@@ -545,6 +553,7 @@
   // ---------- CAMERA STATE ----------
   const CAM_OFFSET_DIR = new THREE.Vector3(0, 0.55, 1).normalize(); // ângulo levemente de cima
   let zoom = 0;              // 0 = visão geral do sistema, 1 = totalmente na Terra (só usado em 'solar'/'planet')
+  let gameplayZoom = 1;      // 1 = padrão, até 1.8 = afastado (só usado em 'gameplay')
   let scene = 'solar';       // 'solar' | 'planet' | 'gameplay'
   let transitioning = false;
   let uiOpen = false;
@@ -573,6 +582,8 @@
   const invScreenEl = document.getElementById('invScreen');
   const invBodyEl = document.getElementById('invBody');
   const exitGameBtnEl = document.getElementById('exitGameBtn');
+  const skillShortcutBtnEl = document.getElementById('skillShortcutBtn');
+  const invShortcutBtnEl = document.getElementById('invShortcutBtn');
   const gatherMsgEl = document.getElementById('gatherMsg');
 
   function currentScene(){
@@ -682,6 +693,9 @@
       planetLabelEl.style.display = 'none';
       gameHudEl.style.display = 'block';
       exitGameBtnEl.style.display = 'block';
+      skillShortcutBtnEl.style.display = 'block';
+      invShortcutBtnEl.style.display = 'block';
+      gameplayZoom = 1;
       updateGameHud();
 
       fadeEl.classList.remove('on');
@@ -698,6 +712,8 @@
       zoom = 0.6;
       gameHudEl.style.display = 'none';
       exitGameBtnEl.style.display = 'none';
+      skillShortcutBtnEl.style.display = 'none';
+      invShortcutBtnEl.style.display = 'none';
       skillScreenEl.classList.remove('on');
       invScreenEl.classList.remove('on');
       openScreen = null;
@@ -732,16 +748,14 @@
     return Object.entries(tool.costs).every(([k,v]) => (inventory[k]||0) >= v);
   }
 
-  // painel pequeno sempre visível: tribo, inventário rápido, atalhos das duas telas
+  // painel pequeno sempre visível: tribo, XP, inventário rápido (os botões de atalho ficam fixos à parte)
   function updateGameHud(){
     const tribeName = TRIBE_NAMES[currentTribeIndex];
     const invHtml = RESOURCE_KEYS.map(k => `${RESOURCE_LABELS[k]}: ${inventory[k]}`).join(' &nbsp;|&nbsp; ');
     gameHudEl.innerHTML = `
       <b>Tribo ${tribeName}</b> — ${currentRegion ? currentRegion.name : ''}<br>
       XP: ${playerXp}<br>
-      ${invHtml}<br>
-      <button onclick="window.__vulcanisOpenSkill()">Skilltree [T]</button>
-      <button onclick="window.__vulcanisOpenInv()">Inventário [I]</button>
+      ${invHtml}
     `;
     if (openScreen === 'skill') updateSkillScreen();
     if (openScreen === 'inv') updateInvScreen();
@@ -825,7 +839,7 @@
       });
     });
     if (!craftItemsHtml) {
-      craftItemsHtml = `<div class="era-locked">Nenhuma receita desbloqueada ainda — abra a Skilltree [T].</div>`;
+      craftItemsHtml = `<div class="era-locked">Nenhuma receita desbloqueada ainda — abra a Skilltree [N].</div>`;
     }
 
     invBodyEl.innerHTML = `
@@ -958,7 +972,7 @@
     if (k === 'escape') {
       if (openScreen) window.__vulcanisCloseScreens();
       else exitGameplay();
-    } else if (k === 't') {
+    } else if (k === 'n') {
       if (openScreen === 'skill') window.__vulcanisCloseScreens();
       else window.__vulcanisOpenSkill();
     } else if (k === 'i') {
@@ -970,16 +984,19 @@
 
   window.addEventListener('wheel', (e) => {
     e.preventDefault();
-    if (transitioning || scene === 'gameplay') return;
+    if (transitioning) return;
     const delta = e.deltaY * ZOOM_SENSITIVITY;
 
     if (scene === 'solar') {
       zoom = THREE.MathUtils.clamp(zoom - delta, 0, 1.15);
       if (zoom >= 1) triggerEnterPlanet();
-    } else {
+    } else if (scene === 'planet') {
       // na cena do planeta: scroll pra "fora" (deltaY negativo além do limite) volta pro sistema
       zoom = THREE.MathUtils.clamp(zoom - delta, -0.35, 1);
       if (zoom <= -0.3) triggerExitPlanet();
+    } else if (scene === 'gameplay') {
+      // dentro da região: só permite afastar (1x = padrão, até ~1.8x mais longe)
+      gameplayZoom = THREE.MathUtils.clamp(gameplayZoom + delta, 1, 1.8);
     }
   }, { passive:false });
 
@@ -1054,9 +1071,9 @@
 
     if (gameplayVolcano) gameplayVolcano.rotation.y += gameplayVolcano.userData.spin * dt;
 
-    const camOffset = new THREE.Vector3(0, 70, 55);
-    const desiredCamPos = player.position.clone().add(camOffset);
-    camera.position.lerp(desiredCamPos, Math.min(1, dt*4));
+    // câmera travada no personagem — sem lerp, sem lag, sem guinada. só a distância muda com o scroll.
+    const camOffset = new THREE.Vector3(0, 70, 55).multiplyScalar(gameplayZoom);
+    camera.position.copy(player.position).add(camOffset);
     const lookTarget = player.position.clone();
     lookTarget.y += 6;
     camera.lookAt(lookTarget);
