@@ -259,7 +259,7 @@
 </head>
 <body>
 
-<div id="versionTag">VulcaniS — protótipo v0.22</div>
+<div id="versionTag">VulcaniS — protótipo v0.23</div>
 <div id="welcomeScreen">
   <h1>Bem-vindo a Vulcanis</h1>
   <div class="hint">Um mundo de tribos, evolução e um vulcão que nunca é 100% previsível.</div>
@@ -894,14 +894,14 @@
   function buildVolcano(x, z){
     const group = new THREE.Group();
     const volcanoMat = new THREE.MeshStandardMaterial({ color: 0x5a3a2a, roughness:0.9 });
-    const volcano = new THREE.Mesh(new THREE.ConeGeometry(16, 22, 24), volcanoMat);
-    volcano.position.set(0, 11, 0);
+    const volcano = new THREE.Mesh(new THREE.ConeGeometry(26, 36, 24), volcanoMat);
+    volcano.position.set(0, 18, 0);
     group.add(volcano);
 
     const craterMat = new THREE.MeshStandardMaterial({ color: 0xff5522, emissive: 0xff3300, emissiveIntensity:1.2 });
-    const crater = new THREE.Mesh(new THREE.CircleGeometry(5, 24), craterMat);
+    const crater = new THREE.Mesh(new THREE.CircleGeometry(8, 24), craterMat);
     crater.rotation.x = -Math.PI/2;
-    crater.position.set(0, 21.8, 0);
+    crater.position.set(0, 35.6, 0);
     group.add(crater);
 
     group.position.set(x, 0, z);
@@ -956,6 +956,8 @@
   const NODE_COUNT = 340;
   const GATHER_RANGE = 5.5;
   const PLAYER_SPEED = 55;
+  const VOLCANO_COLLISION_RADIUS = 28; // raio da base do vulcão (escala nova) — jogador não atravessa
+  const VOLCANO_OFFER_COOLDOWN = 20; // segundos — só processa uma oferenda por vez, evita spam de rolagem
   const RESPAWN_INTERVAL = 60; // segundos entre cada leva de respawn — mais lento pra forçar escassez/disputa
   const RESPAWN_BATCH = 10;    // máximo de recursos novos por leva (nunca passa de NODE_COUNT no total)
   const HUNGER_DECAY_PER_SEC = 100/600; // zera em ~10min sem comer
@@ -1185,6 +1187,7 @@
   const volcanoFlashEl = document.getElementById('volcanoFlash');
   const volcanoResultMsgEl = document.getElementById('volcanoResultMsg');
   let offerMenuOpen = false;
+  let volcanoOfferCooldown = 0; // segundos restantes até o vulcão aceitar outra oferenda
 
   function handleVolcanoInteract(){
     if (player.position.distanceTo(gameplayVolcano.position) > INTERACT_RANGE + 25) {
@@ -1237,10 +1240,15 @@
   }
 
   window.__vulcanisOfferResource = function(key){
+    if (volcanoOfferCooldown > 0) {
+      showGatherMsg(`O vulcão ainda está digerindo a última oferenda — espera ${Math.ceil(volcanoOfferCooldown)}s`);
+      return;
+    }
     const qty = inventory[key] || 0;
     if (qty <= 0) return;
     inventory[key] = 0;
     window.__vulcanisCloseOfferMenu();
+    volcanoOfferCooldown = VOLCANO_OFFER_COOLDOWN;
 
     const magnitude = qty * (OFFER_VALUE[key] || 1);
     const blessed = Math.random() < 0.55; // levemente favorável, mas nunca garantido
@@ -1696,6 +1704,7 @@
       activeEraTab = 0;
       openScreen = null;
       respawnTimer = 0;
+      volcanoOfferCooldown = 0;
 
       scene = 'gameplay';
       gameplayZoom = 1.8; // já começa afastado
@@ -2423,6 +2432,16 @@
       const half = GAMEPLAY_REGION_SIZE/2 - 8;
       player.position.x = THREE.MathUtils.clamp(player.position.x + dx*PLAYER_SPEED*dt, -half, half);
       player.position.z = THREE.MathUtils.clamp(player.position.z + dz*PLAYER_SPEED*dt, -half, half);
+      // colisão simples com o vulcão (sempre no centro da região, 0,0) — empurra o jogador pra fora do raio da base
+      const distToVolcano = Math.hypot(player.position.x, player.position.z);
+      if (distToVolcano < VOLCANO_COLLISION_RADIUS) {
+        if (distToVolcano < 0.001) { player.position.x = VOLCANO_COLLISION_RADIUS; player.position.z = 0; }
+        else {
+          const push = VOLCANO_COLLISION_RADIUS / distToVolcano;
+          player.position.x *= push;
+          player.position.z *= push;
+        }
+      }
       player.rotation.y = Math.atan2(dx, dz); // encara a direção que anda
       player.userData.walkPhase = (player.userData.walkPhase || 0) + dt*9;
       player.userData.bodyY = Math.abs(Math.sin(player.userData.walkPhase)) * 0.55; // balancinho de passo
@@ -2434,6 +2453,7 @@
     }
 
     if (!openScreen && !plantMenuOpen && !offerMenuOpen) updateAutoGather(dt, isMoving);
+    if (volcanoOfferCooldown > 0) volcanoOfferCooldown = Math.max(0, volcanoOfferCooldown - dt);
 
     if (gatherState) {
       const { node } = gatherState;
