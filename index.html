@@ -259,7 +259,7 @@
 </head>
 <body>
 
-<div id="versionTag">VulcaniS — protótipo v0.24</div>
+<div id="versionTag">VulcaniS — protótipo v0.25</div>
 <div id="welcomeScreen">
   <h1>Bem-vindo a Vulcanis</h1>
   <div class="hint">Um mundo de tribos, evolução e um vulcão que nunca é 100% previsível.</div>
@@ -501,12 +501,6 @@
       { name:'Lança de Madeira',  xpCost:20, costs:{ graveto:3, corda:1 },   dmg:9 },
       { name:'Arco e Flecha',     xpCost:25, costs:{ graveto:2, corda:2 },   dmg:7 },
     ]},
-    { name:'Idade do Bronze', tools:[
-      { name:'Machado de Bronze', xpCost:45, costs:{ madeira:2, minerio:3 }, dmg:16 },
-      { name:'Espada de Bronze',  xpCost:50, costs:{ madeira:1, minerio:4 }, dmg:18 },
-      { name:'Escudo de Bronze',  xpCost:40, costs:{ madeira:2, minerio:2 }, def:10 },
-      { name:'Armadura de Bronze',xpCost:55, costs:{ madeira:1, minerio:5 }, def:14 },
-    ]},
     { name:'Idade do Ferro', tools:[
       { name:'Picareta de Ferro', xpCost:65, costs:{ madeira:3, lasca:2 },   dmg:14 },
       { name:'Espada de Ferro',   xpCost:75, costs:{ madeira:1, ferro:4 },   dmg:26 },
@@ -514,10 +508,10 @@
       { name:'Armadura de Ferro', xpCost:80, costs:{ madeira:1, ferro:5 },   def:22 },
     ]},
     { name:'Idade Medieval', tools:[
-      { name:'Besta',              xpCost:95,  costs:{ madeira:3, ferro:2, corda:2 }, dmg:30 },
-      { name:'Espada Longa',       xpCost:100, costs:{ madeira:1, ferro:5 },          dmg:34 },
-      { name:'Armadura de Placas', xpCost:120, costs:{ madeira:1, ferro:6 },          def:34 },
-      { name:'Alabarda',           xpCost:105, costs:{ madeira:2, ferro:4 },          dmg:32 },
+      { name:'Besta',              xpCost:95,  costs:{ madeira:2, minerio:2, ferro:2, corda:2 }, dmg:30 },
+      { name:'Espada Longa',       xpCost:100, costs:{ madeira:1, minerio:2, ferro:3 }, dmg:34 },
+      { name:'Armadura de Placas', xpCost:120, costs:{ minerio:3, ferro:4 },            def:34 },
+      { name:'Alabarda',           xpCost:105, costs:{ madeira:1, minerio:2, ferro:3 }, dmg:32 },
     ]},
     { name:'Idade Industrial', tools:[
       { name:'Rifle',            xpCost:150, costs:{ madeira:2, ferro:6 }, dmg:45 },
@@ -535,7 +529,7 @@
 
   // classe do personagem = era mais avançada já totalmente desbloqueada na Skilltree.
   // todo mundo nasce Bárbaro; evolui de classe conforme completa cada era.
-  const CLASS_NAMES = ['Bárbaro', 'Guerreiro', 'Guerreiro de Ferro', 'Cavaleiro', 'Soldado', 'Operativo'];
+  const CLASS_NAMES = ['Bárbaro', 'Guerreiro', 'Cavaleiro', 'Soldado', 'Operativo'];
   function currentClassIndex(){
     let completed = 0;
     for (let i=0; i<ERAS.length; i++){
