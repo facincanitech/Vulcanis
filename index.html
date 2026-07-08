@@ -274,7 +274,7 @@
 </head>
 <body>
 
-<div id="versionTag">VulcaniS — protótipo v0.30</div>
+<div id="versionTag">VulcaniS — protótipo v0.31</div>
 <div id="welcomeScreen">
   <h1>Bem-vindo a Vulcanis</h1>
   <div class="hint">Um mundo de tribos, evolução e um vulcão que nunca é 100% previsível.</div>
@@ -336,7 +336,7 @@
 <div id="electionScreen" class="screenOverlay">
   <div id="electionPanel" class="screenPanel" style="width:420px;">
     <h2>Eleição de líder [V]</h2>
-    <div class="hint">Vote em quem deve ser o líder da tribo. Só o líder pode ligar a contagem final de 30 minutos — e só depois de completar a Idade Medieval.</div>
+    <div class="hint">Vote em quem deve ser o líder da tribo. O vulcão decide sozinho quando a partida termina — ofereça bastante e do que ele gosta pra sua tribo durar mais.</div>
     <div id="electionBody"></div>
     <button class="screenCloseBtn" onclick="window.__vulcanisCloseScreens()">Fechar (ESC)</button>
   </div>
@@ -1230,17 +1230,16 @@
     } catch (e) { console.warn('insert region_structures falhou:', e); }
   }
 
-  function renderForeignStructure(row){
-    let mesh;
-    if (row.kind === 'farm') mesh = buildFarmPlot(row.x, row.z);
-    else if (row.kind === 'warehouse') mesh = buildWarehouse(row.x, row.z);
-    else if (row.kind === 'barricade_medieval' || row.kind === 'barricade_moderna') mesh = buildBarricadeMesh(row.kind, row.x, row.z);
-    else return;
-    gameplayScene.add(mesh);
+  function buildStructureMeshFor(row){
+    if (row.kind === 'farm') return buildFarmPlot(row.x, row.z);
+    if (row.kind === 'warehouse') return buildWarehouse(row.x, row.z);
+    if (row.kind === 'barricade_medieval' || row.kind === 'barricade_moderna') return buildBarricadeMesh(row.kind, row.x, row.z);
+    return null;
   }
 
   // busca tudo que já foi construído na região (por qualquer jogador) — chamado ao entrar e de longe em
-  // longe depois (estrutura é fixa, não precisa do ritmo de heartbeat de posição)
+  // longe depois (estrutura é fixa, só muda quando alguém constrói ou morre pro vulcão e perde tudo).
+  // também remove do mundo o que sumiu do banco (destruído por morte), pra quem não é o dono ver sumir também
   async function fetchRegionStructures(regionIndex){
     if (!sb || !gameplayScene) return;
     try {
@@ -1248,12 +1247,20 @@
         .select('id, tribe_index, player_id, kind, x, z')
         .eq('region_index', regionIndex);
       if (error) throw error;
-      (data || []).forEach(row => {
-        if (seenStructureIds.has(row.id)) return;
-        seenStructureIds.add(row.id);
-        if (row.player_id !== myPlayerId) renderForeignStructure(row);
+      const rows = data || [];
+      const seenIds = new Set();
+      rows.forEach(row => {
+        seenIds.add(row.id);
+        if (row.player_id === myPlayerId || renderedStructures.has(row.id)) return;
+        const mesh = buildStructureMeshFor(row);
+        if (mesh) { gameplayScene.add(mesh); renderedStructures.set(row.id, mesh); }
       });
-      allBarricadePoints = (data || [])
+      renderedStructures.forEach((mesh, id) => {
+        if (seenIds.has(id)) return;
+        gameplayScene.remove(mesh);
+        renderedStructures.delete(id);
+      });
+      allBarricadePoints = rows
         .filter(r => r.kind === 'barricade_medieval' || r.kind === 'barricade_moderna')
         .map(r => ({ x: r.x, z: r.z, tier: r.kind }));
     } catch (e) { console.warn('fetch region_structures falhou:', e); }
@@ -1297,10 +1304,32 @@
     tribeBarricadePositions(currentTribeIndex).forEach(p => {
       const mesh = buildBarricadeMesh(tier, p.x, p.z);
       gameplayScene.add(mesh);
+      ownBarricadeMeshes.push(mesh);
       allBarricadePoints.push({ x:p.x, z:p.z, tier });
       insertRegionStructure(tier, p.x, p.z);
     });
     builtBarricadeTier = tier;
+  }
+
+  // vulcão matou o jogador: destrói tudo que ele construiu (fazenda/armazém/barricada) — tanto localmente
+  // quanto no banco (pra sumir pra todo mundo também), e desconta os pontos de abrigo das barricadas
+  async function destroyOwnStructuresOnDeath(){
+    if (gameplayScene) {
+      if (farmPlot) gameplayScene.remove(farmPlot.mesh);
+      if (warehouse) gameplayScene.remove(warehouse.mesh);
+      ownBarricadeMeshes.forEach(m => gameplayScene.remove(m));
+    }
+    if (builtBarricadeTier) {
+      const myPoints = tribeBarricadePositions(currentTribeIndex);
+      allBarricadePoints = allBarricadePoints.filter(p => !myPoints.some(mp => mp.x === p.x && mp.z === p.z));
+    }
+    farmPlot = null;
+    warehouse = null;
+    ownBarricadeMeshes = [];
+    builtBarricadeTier = null;
+    if (!sb) return;
+    try { await sb.from('region_structures').delete().eq('player_id', myPlayerId); }
+    catch (e) { console.warn('destruir estruturas falhou:', e); }
   }
 
   function toolByStructureKind(kind){
@@ -1375,8 +1404,19 @@
   }
 
   // ---------- VULCÃO: oferendas ----------
-  // "valor" de cada recurso — quanto mais raro, mais pesa na força da reação
-  const OFFER_VALUE = { graveto:1, lasca:1, corda:1, madeira:2, minerio:3, carvao:2, ferro:4, prata:5, ouro:6 };
+  // quanto o vulcão "gosta" de cada item, por unidade — arma de fogo/explosivo ele ama, pedra crua ele
+  // é indiferente. Vale tanto pra recursos crus quanto pra itens craftados (arma/armadura)
+  function volcanoAffinityForItem(name){
+    if (/Dinamite|Granada|Canhão/.test(name)) return 14;
+    if (/Rifle|Fuzil|Arco|Besta|Drone/.test(name)) return 9;
+    if (/Ouro/.test(name)) return 8;
+    if (/Prata/.test(name)) return 6;
+    if (/Armadura|Colete|Escudo/.test(name)) return 3;
+    if (/Ferro/.test(name)) return 4;
+    if (/Minério|Carvão/.test(name)) return 2;
+    if (/Machado|Espada|Faca|Porrete|Lança|Alabarda|Madeira/.test(name)) return 1.5;
+    return 1; // graveto, lasca, corda — o "lixo" básico, ele tolera mas não empolga
+  }
   const offerScreenEl = document.getElementById('offerScreen');
   const offerMenuBodyEl = document.getElementById('offerMenuBody');
   const volcanoFlashEl = document.getElementById('volcanoFlash');
@@ -1394,13 +1434,19 @@
 
   function openOfferMenu(){
     const owned = RESOURCE_KEYS.filter(k => inventory[k] > 0);
-    if (!owned.length) {
+    const craftedOwned = Object.entries(craftedCounts).filter(([,v]) => v > 0);
+    if (!owned.length && !craftedOwned.length) {
       showGatherMsg('Você não tem nada pra oferecer ainda');
       return;
     }
-    offerMenuBodyEl.innerHTML = owned.map(k =>
+    let html = owned.map(k =>
       `<div class="skillSquare" onclick="window.__vulcanisOfferResource('${k}')">${RESOURCE_ICONS[k]}<br>${RESOURCE_LABELS[k]} (${inventory[k]})</div>`
     ).join('');
+    html += craftedOwned.map(([key, count]) => {
+      const name = itemNameFromKey(key);
+      return `<div class="skillSquare" onclick="window.__vulcanisOfferItem('${key}')">${itemIcon(name)}<br>${name} (${count})</div>`;
+    }).join('');
+    offerMenuBodyEl.innerHTML = html;
     offerMenuOpen = true;
     offerScreenEl.classList.add('on');
   }
@@ -1443,11 +1489,32 @@
     if (qty <= 0) return;
     inventory[key] = 0;
     window.__vulcanisCloseOfferMenu();
-    volcanoOfferCooldown = VOLCANO_OFFER_COOLDOWN;
+    processOffering(qty, volcanoAffinityForItem(RESOURCE_LABELS[key] || key));
+  };
 
-    const magnitude = qty * (OFFER_VALUE[key] || 1);
+  window.__vulcanisOfferItem = function(key){
+    if (volcanoOfferCooldown > 0) {
+      showGatherMsg(`O vulcão ainda está digerindo a última oferenda — espera ${Math.ceil(volcanoOfferCooldown)}s`);
+      return;
+    }
+    const qty = craftedCounts[key] || 0;
+    if (qty <= 0) return;
+    const name = itemNameFromKey(key);
+    craftedCounts[key] = 0;
+    if (equippedWeapon === key) { equippedWeapon = null; updatePlayerWeaponVisual(); }
+    if (equippedArmor === key) { equippedArmor = null; updatePlayerArmorVisual(); }
+    window.__vulcanisCloseOfferMenu();
+    processOffering(qty, volcanoAffinityForItem(name));
+  };
+
+  // pontos com o vulcão são sempre creditados (qty * afinidade), independente do resultado da rolagem —
+  // pontos = "quanto alimentei", a rolagem abaixo é só o efeito imediato de sabor (bênção/fúria)
+  function processOffering(qty, affinity){
+    volcanoOfferCooldown = VOLCANO_OFFER_COOLDOWN;
+    const magnitude = qty * affinity;
+    feedVolcano(magnitude);
+
     const blessed = Math.random() < 0.55; // levemente favorável, mas nunca garantido
-    const roll = Math.random();
 
     let tier; // micro | moderada | forte | maxima
     if (magnitude < 8) tier = 'micro';
@@ -1498,7 +1565,7 @@
       }
     }
     updateGameHud();
-  };
+  }
 
   // tela de gerenciar a fazenda: mostra os 4 canteiros e a ação disponível pra cada um (plantar/regar/colher).
   // null = visão geral dos 4 canteiros; um índice = escolhendo cultura pra plantar naquele canteiro específico
@@ -1720,8 +1787,9 @@
   // estruturas sincronizadas (fazenda/armazém/barricada de todo mundo na região — árvore/pedra/graveto
   // continuam só locais, não precisam ser vistos por todos)
   let builtBarricadeTier = null;  // null | 'barricade_medieval' | 'barricade_moderna' — a própria, uma só por jogador
+  let ownBarricadeMeshes = [];    // meshes das 5 barricadas próprias — pra poder remover se o vulcão me matar
   let allBarricadePoints = [];    // [{x,z,tier}] de TODA a região (própria + de todo mundo), usado no cálculo de abrigo
-  let seenStructureIds = new Set();
+  let renderedStructures = new Map(); // id (linha do banco) -> mesh, só das estruturas de OUTROS jogadores
   let structureFetchTimer = 0;
   const STRUCTURE_FETCH_INTERVAL = 45; // segundos — bem mais espaçado que o heartbeat de posição, estruturas são fixas
 
@@ -1732,13 +1800,22 @@
   let dbHeartbeatTimer = 0;
   const DB_HEARTBEAT_INTERVAL = 4; // segundos — também serve pra mostrar a posição dos outros (com lag)
 
-  // eleição de líder + contagem final: líder é só quem tem mais votos entre os presentes da tribo agora
-  // (recalculado ao vivo, não fica "gravado"); só ele liga a contagem de 30min, e só após a Idade Medieval
-  let myVote = null;          // player_id em quem eu votei
-  let roundEndsAt = null;     // timestamp (ms) de quando a contagem final termina, ou null se não ligada
-  let roundStartedByTribe = null;
-  let roundFetchTimer = 0;
-  const ROUND_FETCH_INTERVAL = 20; // segundos — estado raro de mudar, não precisa do ritmo do heartbeat
+  // eleição de líder: líder é só quem tem mais votos entre os presentes da tribo agora (recalculado ao
+  // vivo, não fica "gravado"). Não liga mais nada sozinho — o vulcão decide tudo agora (ver abaixo).
+  let myVote = null; // player_id em quem eu votei
+
+  // ---------- VULCÃO AUTÔNOMO: fome, raiva (mata gente) e escárnio (fallback de partida longa) ----------
+  // simulado por quem "hospeda" a região no momento (mesma eleição usada pros bots) — ninguém aperta botão,
+  // o vulcão decide sozinho com base em quando foi alimentado (oferendas) e nos pontos acumulados por tribo
+  const HUNGER_WARN_MS = 20*60*1000;   // 20min sem oferenda -> avisa que tá com fome
+  const HUNGER_KILL_DELAY_MS = 5*60*1000; // +5min sem oferenda depois do aviso -> começa a matar
+  const KILL_INTERVAL_MS = 3*60*1000;  // enquanto furioso, mata 1 de novo a cada 3min até ser alimentado
+  const ESCARNIO_TRIGGER_MS = 60*60*1000; // 1h sem NUNCA ter ficado furioso -> escárnio (partida travada/pacífica demais)
+  const ESCARNIO_DURATION_MS = 30*60*1000; // depois do escárnio começar, 30min até o extermínio final
+  let volcanoState = null; // { state, lastFedAt, stateSince, lastKillAt, simulationStartedAt } (ms locais, convertidos do banco)
+  let tribePointsCache = { 0:0, 1:0, 2:0, 3:0 }; // cache local dos pontos de cada tribo com o vulcão, só pra exibir
+  let volcanoFetchTimer = 0;
+  const VOLCANO_FETCH_INTERVAL = 25; // segundos
 
   // ---------- contagem + posição via banco (player_sessions) — sobrevive a queda de WebSocket ----------
   async function upsertPlayerSession(regionIndex, tribeIndex, x, z){
@@ -1755,6 +1832,7 @@
         equipped_weapon: itemNameFromKey(equippedWeapon),
         equipped_armor: itemNameFromKey(equippedArmor),
         vote_for: myVote,
+        killed_by: null,
         last_seen: new Date().toISOString(),
       });
     } catch (e) { console.warn('upsert player_sessions falhou:', e); }
@@ -1766,9 +1844,11 @@
     catch (e) { console.warn('delete player_sessions falhou:', e); }
   }
 
-  // ---------- ELEIÇÃO DE LÍDER + CONTAGEM FINAL ----------
+  // ---------- ELEIÇÃO DE LÍDER ----------
   // líder não é um cargo salvo em lugar nenhum — é sempre recalculado ao vivo a partir dos votos de quem
-  // tá presente na tribo agora (o próprio voto vem no heartbeat de player_sessions, "vote_for")
+  // tá presente na tribo agora (o próprio voto vem no heartbeat de player_sessions, "vote_for").
+  // não liga mais contagem nenhuma — isso agora é 100% decidido pelo próprio vulcão (ver seção VULCÃO abaixo).
+  // fica como base pronta pra outros usos de liderança mais pra frente.
   function tribemateEntries(){
     const mates = [{ id: myPlayerId, name: playerName || 'Bárbaro Anônimo', voteFor: myVote }];
     Object.entries(otherPlayers).forEach(([id, rp]) => {
@@ -1796,49 +1876,196 @@
     catch (e) { console.warn('votar falhou:', e); }
   };
 
-  async function fetchRoundState(regionIndex){
-    if (!sb) return;
-    try {
-      const { data, error } = await sb.from('region_rounds').select('started_by_tribe, ends_at').eq('region_index', regionIndex).maybeSingle();
-      if (error) throw error;
-      roundEndsAt = data && data.ends_at ? new Date(data.ends_at).getTime() : null;
-      roundStartedByTribe = data ? data.started_by_tribe : null;
-      updateRoundCountdownDisplay();
-    } catch (e) { console.warn('fetch region_rounds falhou:', e); }
-  }
-
-  window.__vulcanisStartCountdown = async function(){
-    if (currentTribeLeaderId() !== myPlayerId || !eraCompleted(2) || (roundEndsAt && roundEndsAt > Date.now()) || !sb) return;
-    const endsAtIso = new Date(Date.now() + 30*60*1000).toISOString();
-    try {
-      await sb.from('region_rounds').upsert({
-        region_index: currentRegionIndex,
-        started_by_tribe: currentTribeIndex,
-        ends_at: endsAtIso,
-        updated_at: new Date().toISOString(),
-      });
-      roundEndsAt = new Date(endsAtIso).getTime();
-      roundStartedByTribe = currentTribeIndex;
-      updateRoundCountdownDisplay();
-      updateElectionScreen();
-      showGatherMsg('⏱️ Contagem final de 30 minutos ligada!');
-    } catch (e) { console.warn('iniciar contagem falhou:', e); }
-  };
-
   function updateRoundCountdownDisplay(){
     if (!roundCountdownEl) return;
-    if (!roundEndsAt) { roundCountdownEl.style.display = 'none'; return; }
-    const remainingMs = roundEndsAt - Date.now();
-    const tribeName = TRIBE_NAMES[roundStartedByTribe] || '?';
-    if (remainingMs <= 0) {
-      roundCountdownEl.textContent = `⏱️ Tempo esgotado! (contagem ligada pela tribo ${tribeName})`;
-    } else {
-      const totalSec = Math.floor(remainingMs/1000);
+    if (!volcanoState || volcanoState.state === 'calm') { roundCountdownEl.style.display = 'none'; return; }
+    if (volcanoState.state === 'hungry') {
+      roundCountdownEl.textContent = `🌋 Vulcanis está com fome... acalme-o com uma oferenda!`;
+    } else if (volcanoState.state === 'angry') {
+      roundCountdownEl.textContent = `🌋💀 Vulcanis está furioso e está matando gente das tribos — ofereça algo pra acalmá-lo!`;
+    } else if (volcanoState.state === 'escarnio') {
+      const remainingMs = (volcanoState.stateSince + ESCARNIO_DURATION_MS) - Date.now();
+      const totalSec = Math.max(0, Math.floor(remainingMs/1000));
       const mm = String(Math.floor(totalSec/60)).padStart(2,'0');
       const ss = String(totalSec%60).padStart(2,'0');
-      roundCountdownEl.textContent = `⏱️ ${mm}:${ss} — contagem final ligada pela tribo ${tribeName}`;
+      roundCountdownEl.textContent = `🌋😤 Vulcanis cansou dos humanos — escárnio em ${mm}:${ss}! Só sobrevive quem tiver mais pontos com ele.`;
     }
     roundCountdownEl.style.display = 'block';
+  }
+
+  // cria a linha de estado do vulcão pra região se ainda não existir (ignora se já tem — não reseta nada)
+  async function ensureVolcanoStateExists(regionIndex){
+    if (!sb) return;
+    try {
+      await sb.from('region_volcano').upsert({ region_index: regionIndex }, { onConflict: 'region_index', ignoreDuplicates: true });
+    } catch (e) { console.warn('criar estado do vulcão falhou:', e); }
+  }
+
+  async function fetchVolcanoState(regionIndex){
+    if (!sb) return;
+    try {
+      const { data, error } = await sb.from('region_volcano')
+        .select('state, last_fed_at, state_since, last_kill_at, simulation_started_at')
+        .eq('region_index', regionIndex).maybeSingle();
+      if (error) throw error;
+      if (!data) { volcanoState = null; return; }
+      volcanoState = {
+        state: data.state,
+        lastFedAt: new Date(data.last_fed_at).getTime(),
+        stateSince: new Date(data.state_since).getTime(),
+        lastKillAt: data.last_kill_at ? new Date(data.last_kill_at).getTime() : null,
+        simulationStartedAt: new Date(data.simulation_started_at).getTime(),
+      };
+      updateRoundCountdownDisplay();
+      if (openScreen === 'election') updateElectionScreen();
+    } catch (e) { console.warn('fetch region_volcano falhou:', e); }
+  }
+
+  async function fetchTribePoints(regionIndex){
+    if (!sb) return;
+    try {
+      const { data, error } = await sb.from('region_tribe_points').select('tribe_index, points').eq('region_index', regionIndex);
+      if (error) throw error;
+      const fresh = { 0:0, 1:0, 2:0, 3:0 };
+      (data || []).forEach(row => { fresh[row.tribe_index] = row.points; });
+      tribePointsCache = fresh;
+      if (openScreen === 'election') updateElectionScreen();
+    } catch (e) { console.warn('fetch region_tribe_points falhou:', e); }
+  }
+
+  // oferenda alimenta o vulcão: credita ponto pra tribo (nunca reseta sozinho) e acalma o vulcão na hora,
+  // não importa em que estado ele estava (fome, raiva) — só o escárnio não tem volta por oferenda
+  async function feedVolcano(points){
+    tribePointsCache[currentTribeIndex] = (tribePointsCache[currentTribeIndex] || 0) + points;
+    if (volcanoState && volcanoState.state !== 'escarnio') {
+      volcanoState.state = 'calm';
+      volcanoState.lastFedAt = Date.now();
+      volcanoState.stateSince = Date.now();
+      updateRoundCountdownDisplay();
+    }
+    if (!sb || currentRegionIndex == null) return;
+    try {
+      const { data } = await sb.from('region_tribe_points').select('points').eq('region_index', currentRegionIndex).eq('tribe_index', currentTribeIndex).maybeSingle();
+      const newPoints = (data ? data.points : 0) + points;
+      await sb.from('region_tribe_points').upsert({
+        region_index: currentRegionIndex, tribe_index: currentTribeIndex, points: newPoints, updated_at: new Date().toISOString(),
+      });
+      if (volcanoState && volcanoState.state !== 'escarnio') {
+        const nowIso = new Date().toISOString();
+        await sb.from('region_volcano').update({ state:'calm', last_fed_at:nowIso, state_since:nowIso, updated_at:nowIso }).eq('region_index', currentRegionIndex);
+      }
+    } catch (e) { console.warn('alimentar vulcão falhou:', e); }
+  }
+
+  async function setVolcanoState(state, nowMs){
+    volcanoState.state = state;
+    volcanoState.stateSince = nowMs;
+    updateRoundCountdownDisplay();
+    if (!sb) return;
+    try {
+      await sb.from('region_volcano').update({ state, state_since: new Date(nowMs).toISOString(), updated_at: new Date().toISOString() }).eq('region_index', currentRegionIndex);
+    } catch (e) { console.warn('atualizar estado do vulcão falhou:', e); }
+  }
+
+  // agrupa jogadores humanos vivos presentes por tribo, e escolhe aleatoriamente 1 da tribo com MENOS
+  // pontos acumulados — quem ofertou mais fica seguro por mais tempo
+  function pickVolcanoKillTarget(){
+    const byTribe = { 0:[], 1:[], 2:[], 3:[] };
+    if (player && scene === 'gameplay' && currentHp > 0) byTribe[currentTribeIndex].push(myPlayerId);
+    Object.entries(otherPlayers).forEach(([id, rp]) => {
+      if (id.startsWith(BOT_ID_PREFIX) || !(rp.hp > 0)) return;
+      byTribe[rp.tribe].push(id);
+    });
+    const tribesPresent = [0,1,2,3].filter(t => byTribe[t].length > 0);
+    if (!tribesPresent.length) return null;
+    tribesPresent.sort((a,b) => (tribePointsCache[a]||0) - (tribePointsCache[b]||0));
+    const worstTribe = tribesPresent[0];
+    const pool = byTribe[worstTribe];
+    return { id: pool[Math.floor(Math.random()*pool.length)], tribe: worstTribe };
+  }
+
+  // mata pela mão do vulcão: zera a vida e marca killed_by pra a vítima saber (e destruir o que construiu),
+  // e apaga direto as estruturas dela — o "host" faz isso por ela, ela pode nem estar olhando pra tela agora
+  async function killPlayerByVolcano(targetId){
+    if (!sb) return;
+    try {
+      await sb.from('player_sessions').update({ hp: 0, killed_by: 'volcano' }).eq('player_id', targetId);
+      await sb.from('region_structures').delete().eq('player_id', targetId);
+    } catch (e) { console.warn('matar jogador (vulcão) falhou:', e); }
+  }
+
+  async function performVolcanoKill(){
+    volcanoState.lastKillAt = Date.now();
+    if (sb) {
+      try { await sb.from('region_volcano').update({ last_kill_at: new Date().toISOString() }).eq('region_index', currentRegionIndex); }
+      catch (e) { console.warn('atualizar last_kill_at falhou:', e); }
+    }
+    const target = pickVolcanoKillTarget();
+    if (!target) return; // ninguém presente pra matar agora
+    await killPlayerByVolcano(target.id);
+    showGatherMsg(`🌋💀 Vulcanis matou alguém da tribo ${TRIBE_NAMES[target.tribe]}!`);
+  }
+
+  // extermínio final do escárnio: mata todo mundo, exceto a tribo com mais pontos acumulados, e reinicia
+  // a rodada (zera pontos, novo relógio) — garante que toda partida tem fim, mesmo se ninguém morrer antes
+  async function runEscarnioFinalKill(){
+    const tribesPresent = [0,1,2,3].filter(t => {
+      if (t === currentTribeIndex && player && scene === 'gameplay' && currentHp > 0) return true;
+      return Object.values(otherPlayers).some(rp => rp.tribe === t && rp.hp > 0);
+    });
+    if (!tribesPresent.length) { await resetVolcanoRound(); return; }
+    const topTribe = tribesPresent.slice().sort((a,b) => (tribePointsCache[b]||0) - (tribePointsCache[a]||0))[0];
+
+    const toKill = [];
+    if (player && scene === 'gameplay' && currentTribeIndex !== topTribe && currentHp > 0) toKill.push(myPlayerId);
+    Object.entries(otherPlayers).forEach(([id, rp]) => {
+      if (id.startsWith(BOT_ID_PREFIX) || !(rp.hp > 0) || rp.tribe === topTribe) return;
+      toKill.push(id);
+    });
+    for (const id of toKill) await killPlayerByVolcano(id);
+
+    showGatherMsg(`🌋 O escárnio se cumpriu — a tribo ${TRIBE_NAMES[topTribe]} sobrevive!`);
+    await resetVolcanoRound();
+  }
+
+  async function resetVolcanoRound(){
+    if (!sb || currentRegionIndex == null) return;
+    const nowIso = new Date().toISOString();
+    try {
+      await sb.from('region_volcano').update({
+        state: 'calm', last_fed_at: nowIso, state_since: nowIso, simulation_started_at: nowIso, last_kill_at: null, updated_at: nowIso,
+      }).eq('region_index', currentRegionIndex);
+      await sb.from('region_tribe_points').delete().eq('region_index', currentRegionIndex);
+    } catch (e) { console.warn('resetar rodada do vulcão falhou:', e); }
+  }
+
+  // tick da simulação — só quem "hospeda" a região (mesma eleição usada pros bots) realmente decide algo;
+  // o resto só lê o estado via fetchVolcanoState/fetchTribePoints
+  async function tickVolcanoAsHost(){
+    if (!sb || !volcanoState) return;
+    const now = Date.now();
+
+    if (volcanoState.state === 'escarnio') {
+      if (now - volcanoState.stateSince >= ESCARNIO_DURATION_MS) await runEscarnioFinalKill();
+      return;
+    }
+    if (now - volcanoState.simulationStartedAt >= ESCARNIO_TRIGGER_MS) {
+      await setVolcanoState('escarnio', now);
+      showGatherMsg('🌋😤 Vulcanis cansou de esperar e ativou o escárnio!');
+      return;
+    }
+    if (volcanoState.state === 'calm' && now - volcanoState.lastFedAt >= HUNGER_WARN_MS) {
+      await setVolcanoState('hungry', now);
+      return;
+    }
+    if (volcanoState.state === 'hungry' && now - volcanoState.stateSince >= HUNGER_KILL_DELAY_MS) {
+      await setVolcanoState('angry', now);
+      await performVolcanoKill();
+      return;
+    }
+    if (volcanoState.state === 'angry' && (!volcanoState.lastKillAt || now - volcanoState.lastKillAt >= KILL_INTERVAL_MS)) {
+      await performVolcanoKill();
+    }
   }
 
   function updateElectionScreen(){
@@ -1856,19 +2083,10 @@
       </div>`;
     }).join('');
 
-    const eraOk = eraCompleted(2); // Idade Medieval
-    const iAmLeader = leaderId === myPlayerId;
-    const roundActive = roundEndsAt && roundEndsAt > Date.now();
-    let actionHtml;
-    if (roundActive) {
-      actionHtml = `<div class="era-locked">Contagem já em andamento (ligada pela tribo ${TRIBE_NAMES[roundStartedByTribe]}).</div>`;
-    } else if (iAmLeader) {
-      actionHtml = `<button ${eraOk ? '' : 'disabled'} onclick="window.__vulcanisStartCountdown()">${eraOk ? 'Ligar contagem final (30 min)' : 'Precisa completar a Idade Medieval'}</button>`;
-    } else {
-      actionHtml = `<div class="era-locked">${leaderId ? 'Só o líder pode ligar a contagem.' : 'Ninguém votou ainda — sem líder definido.'}</div>`;
-    }
+    const myPoints = tribePointsCache[currentTribeIndex] || 0;
+    const hint = `<div class="era-locked">Pontos da sua tribo com o vulcão: <b>${Math.round(myPoints)}</b>. Quem tiver mais pontos sobrevive por mais tempo.</div>`;
 
-    electionBodyEl.innerHTML = `<div class="craftList">${rowsHtml}</div><div style="margin-top:14px;text-align:center">${actionHtml}</div>`;
+    electionBodyEl.innerHTML = `<div class="craftList">${rowsHtml}</div><div style="margin-top:14px">${hint}</div>`;
   }
 
   // ---------- BOTS: linhas normais em player_sessions (player_id "bot_..."), simulados por quem estiver
@@ -1957,7 +2175,7 @@
     const newHp = Math.max(0, (rp ? rp.hp : 100) - dmg);
     if (rp) rp.hp = newHp;
     if (!sb) return;
-    try { await sb.from('player_sessions').update({ hp: newHp }).eq('player_id', target.id); }
+    try { await sb.from('player_sessions').update({ hp: newHp, killed_by: null }).eq('player_id', target.id); }
     catch (e) { console.warn('dano de bot falhou:', e); }
   }
 
@@ -2228,14 +2446,15 @@
       volcanoOfferCooldown = 0;
       builtBarricadeTier = null;
       allBarricadePoints = [];
-      seenStructureIds = new Set();
+      renderedStructures = new Map();
       structureFetchTimer = 0;
       botStates = {};
       botTickTimer = 0;
       myVote = null;
-      roundEndsAt = null;
-      roundStartedByTribe = null;
-      roundFetchTimer = 0;
+      volcanoState = null;
+      tribePointsCache = { 0:0, 1:0, 2:0, 3:0 };
+      volcanoFetchTimer = 0;
+      ownBarricadeMeshes = [];
 
       scene = 'gameplay';
       gameplayZoom = 1.8; // já começa afastado
@@ -2256,7 +2475,9 @@
       fetchOtherPlayersInRegion(regionIndex);
       fetchRegionStructures(regionIndex);
       ensureBotsSpawned(regionIndex, tribeIndex);
-      fetchRoundState(regionIndex);
+      ensureVolcanoStateExists(regionIndex);
+      fetchVolcanoState(regionIndex);
+      fetchTribePoints(regionIndex);
 
       // o ponto de luz cresce, revelando a cena — como saindo de dentro da caverna
       caveLightEl.style.transition = 'width 1.1s ease-out, height 1.1s ease-out';
@@ -2424,7 +2645,7 @@
     showGatherMsg(`⚔️ Acertou ${rp.mesh.userData.name || 'inimigo'}! -${dmg} HP`);
     if (!sb) return;
     try {
-      await sb.from('player_sessions').update({ hp: newHp }).eq('player_id', id);
+      await sb.from('player_sessions').update({ hp: newHp, killed_by: null }).eq('player_id', id);
     } catch (e) { console.warn('ataque falhou:', e); }
   }
 
@@ -2442,14 +2663,14 @@
   async function syncOwnHp(){
     if (!sb) return true;
     try {
-      const { data, error } = await sb.from('player_sessions').select('hp').eq('player_id', myPlayerId).maybeSingle();
+      const { data, error } = await sb.from('player_sessions').select('hp, killed_by').eq('player_id', myPlayerId).maybeSingle();
       if (error) throw error;
       if (data && typeof data.hp === 'number' && data.hp < currentHp) {
         currentHp = Math.max(0, data.hp);
         showGatherMsg(`💥 Você levou dano! HP: ${Math.round(currentHp)}`);
         updateGameHud();
         if (currentHp <= 0) {
-          handlePlayerDeath();
+          handlePlayerDeath(data.killed_by === 'volcano');
           return false;
         }
       }
@@ -2457,8 +2678,13 @@
     return true;
   }
 
-  function handlePlayerDeath(){
-    showVolcanoResult('Você morreu 💀', 'Voltando pra seleção de mapa...');
+  function handlePlayerDeath(killedByVolcano){
+    if (killedByVolcano) {
+      showVolcanoResult('O vulcão te matou 🌋💀', 'Tudo que você construiu virou cinzas. Voltando pra seleção de mapa...');
+      destroyOwnStructuresOnDeath();
+    } else {
+      showVolcanoResult('Você morreu 💀', 'Voltando pra seleção de mapa...');
+    }
     setTimeout(() => { exitGameplay(); }, 1400);
   }
 
@@ -3187,12 +3413,13 @@
       if (isBotHostNow()) tickBotsAsHost();
     }
 
-    // contagem final: estado raro de mudar, só reconsulta de longe em longe (o ponteiro mm:ss local já
-    // conta sozinho a cada segundo lá em cima, isso só pega se outra tribo ligou enquanto eu não olhava)
-    roundFetchTimer += dt;
-    if (roundFetchTimer >= ROUND_FETCH_INTERVAL) {
-      roundFetchTimer = 0;
-      fetchRoundState(currentRegionIndex);
+    // vulcão: reconsulta de longe em longe + só quem hospeda a região de fato roda a simulação (fome/raiva/escárnio)
+    volcanoFetchTimer += dt;
+    if (volcanoFetchTimer >= VOLCANO_FETCH_INTERVAL) {
+      volcanoFetchTimer = 0;
+      fetchVolcanoState(currentRegionIndex);
+      fetchTribePoints(currentRegionIndex);
+      if (isBotHostNow()) tickVolcanoAsHost();
     }
 
     // câmera travada no personagem — sem lerp, sem lag, sem guinada. só a distância muda com o scroll.
