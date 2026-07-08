@@ -1,0 +1,973 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+<meta charset="UTF-8">
+<title>VulcaniS — Protótipo Sistema Solar</title>
+<style>
+  html, body { margin:0; padding:0; overflow:hidden; background:#000; height:100%; width:100%; }
+  canvas { display:block; }
+  #hud {
+    position:fixed; top:12px; left:12px; color:#cfe8ff; font-family: monospace;
+    font-size:13px; background:rgba(0,0,0,0.35); padding:8px 12px; border-radius:6px;
+    pointer-events:none; line-height:1.5; z-index:10;
+  }
+  #fade {
+    position:fixed; top:0; left:0; width:100%; height:100%; background:#000;
+    opacity:0; pointer-events:none; transition: opacity 0.6s ease; z-index:20;
+  }
+  #fade.on { opacity:1; }
+  #planetLabel {
+    position:fixed; top:12px; left:12px; color:#dfffe0; font-family: monospace;
+    font-size:13px; background:rgba(0,0,0,0.35); padding:8px 12px; border-radius:6px;
+    pointer-events:none; display:none; z-index:10;
+  }
+  #tribeSelect {
+    position:fixed; inset:0; background:rgba(0,0,0,0.6); display:none;
+    align-items:center; justify-content:center; flex-direction:column; z-index:30;
+    font-family:monospace;
+  }
+  #tribeSelect.on { display:flex; }
+  #tribeSelect h2 { color:#eaf6ff; margin-bottom:18px; font-size:18px; }
+  .tribeBtn {
+    width:170px; padding:14px; margin:6px; border:none; border-radius:8px;
+    font-family:monospace; font-size:15px; font-weight:bold; cursor:pointer; color:#fff;
+  }
+  .tribeBtn.blue  { background:#2277dd; }
+  .tribeBtn.red   { background:#dd2233; }
+  .tribeBtn.white { background:#f2f2f2; color:#111; }
+  .tribeBtn.black { background:#222222; border:1px solid #666; }
+  #tribeCancel {
+    margin-top:14px; background:transparent; border:1px solid #888; color:#ccc;
+    padding:8px 16px; border-radius:6px; cursor:pointer; font-family:monospace;
+  }
+  #gameHud {
+    position:fixed; top:12px; left:12px; color:#eaf6ff; font-family:monospace; font-size:12px;
+    background:rgba(0,0,0,0.5); padding:10px 14px; border-radius:6px; display:none;
+    z-index:10; max-width:280px; max-height:92vh; overflow-y:auto; line-height:1.5;
+  }
+  #gameHud button { font-family:monospace; font-size:12px; cursor:pointer; margin-top:4px; }
+  #exitGameBtn {
+    position:fixed; bottom:14px; left:14px; font-family:monospace; font-size:12px;
+    background:rgba(0,0,0,0.5); color:#eaf6ff; border:1px solid #667; padding:8px 12px;
+    border-radius:6px; cursor:pointer; display:none; z-index:10;
+  }
+  #gatherMsg {
+    position:fixed; bottom:16px; left:50%; transform:translateX(-50%); color:#fff2cc;
+    font-family:monospace; background:rgba(0,0,0,0.45); padding:6px 12px; border-radius:6px;
+    display:none; z-index:10; pointer-events:none;
+  }
+  #craftScreen {
+    position:fixed; inset:0; background:rgba(0,0,0,0.72); display:none;
+    align-items:center; justify-content:center; z-index:40; font-family:monospace;
+  }
+  #craftScreen.on { display:flex; }
+  #craftPanel {
+    width:min(720px, 92vw); max-height:82vh; overflow-y:auto; background:#0d1a14;
+    border:1px solid #3a5a44; border-radius:10px; padding:18px 20px; color:#eaf6ff;
+  }
+  #craftPanel h2 { margin:0 0 12px; font-size:18px; }
+  #craftCloseBtn {
+    margin-top:14px; background:transparent; border:1px solid #888; color:#ccc;
+    padding:7px 14px; border-radius:6px; cursor:pointer; font-family:monospace;
+  }
+  .eraTabs { display:flex; flex-wrap:wrap; gap:4px; margin:8px 0 10px; }
+  .eraTab {
+    font-size:11px; padding:5px 8px; border-radius:4px; border:1px solid #4a6072;
+    background:#112028; color:#cfe8ff; white-space:nowrap; cursor:pointer;
+  }
+  .eraTab.active { background:#2a4a5f; border-color:#7fd4ff; }
+  .eraTab.locked { opacity:0.35; cursor:not-allowed; }
+  .eraTab.done { border-color:#5fdc7a; }
+  .era-locked { opacity:0.6; font-size:12px; margin-top:8px; }
+  .craftList { display:flex; flex-direction:column; gap:6px; }
+  .craftRow {
+    display:flex; align-items:center; justify-content:space-between; gap:10px;
+    background:#132420; border:1px solid #26402f; border-radius:6px; padding:8px 10px;
+    font-size:12px;
+  }
+  .craftRow.done { opacity:0.55; }
+  .craftRow .costs { display:flex; gap:8px; flex-wrap:wrap; font-size:11px; }
+  .costOk  { color:#8fe8a0; }
+  .costBad { color:#e88f8f; }
+  .craftRow button { font-family:monospace; font-size:11px; cursor:pointer; }
+</style>
+</head>
+<body>
+
+<div id="hud">
+  VulcaniS — protótipo v0.1<br>
+  Scroll = zoom na Terra (aproxima e troca de tela)<br>
+  Sistema em escala/velocidade artificiais
+</div>
+<div id="planetLabel">
+  Clique numa região pra escolher sua tribo e entrar nela.<br>
+  Scroll pra fora = voltar pro sistema solar.
+</div>
+<div id="tribeSelect">
+  <h2 id="tribeSelectTitle">Escolha sua tribo</h2>
+  <div>
+    <button class="tribeBtn blue" data-tribe="0">Azul</button>
+    <button class="tribeBtn red" data-tribe="1">Vermelho</button>
+    <button class="tribeBtn white" data-tribe="2">Branco</button>
+    <button class="tribeBtn black" data-tribe="3">Preto</button>
+  </div>
+  <button id="tribeCancel">Cancelar</button>
+</div>
+<div id="gameHud"></div>
+<button id="exitGameBtn">Sair da região (ESC)</button>
+<div id="gatherMsg"></div>
+<div id="craftScreen">
+  <div id="craftPanel">
+    <h2>Crafting</h2>
+    <div id="craftBody"></div>
+    <button id="craftCloseBtn">Fechar (ESC)</button>
+  </div>
+</div>
+<div id="fade"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+(function(){
+  "use strict";
+
+  // ---------- CONFIG ----------
+  const SUN_RADIUS = 18;
+  const EARTH_RADIUS = 4;
+  const MOON_RADIUS = 1.1;
+  const EARTH_ORBIT_RADIUS = 90;
+  const MOON_ORBIT_RADIUS = 12;
+
+  // velocidades bem lentas (radianos/seg)
+  const EARTH_ORBIT_SPEED = 0.02;   // volta completa ~ 5 min
+  const EARTH_SPIN_SPEED  = 0.15;
+  const MOON_ORBIT_SPEED  = 0.09;   // volta completa ~ 70s
+  const MOON_SPIN_SPEED   = 0.09;
+
+  const ZOOM_SENSITIVITY = 0.0007;
+  const MAX_CAM_DIST = 260;
+  const MIN_CAM_DIST = 12;
+
+  // ---------- RENDERER / SCENES ----------
+  const renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer.setPixelRatio(window.devicePixelRatio);
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  document.body.appendChild(renderer.domElement);
+
+  const camera = new THREE.PerspectiveCamera(50, window.innerWidth/window.innerHeight, 0.1, 3000);
+
+  // ===================== SOLAR SCENE =====================
+  const solarScene = new THREE.Scene();
+
+  // estrelas de fundo
+  (function addStars(){
+    const starGeo = new THREE.BufferGeometry();
+    const count = 1500;
+    const positions = new Float32Array(count*3);
+    for (let i=0;i<count;i++){
+      const r = 800 + Math.random()*1200;
+      const theta = Math.random()*Math.PI*2;
+      const phi = Math.acos((Math.random()*2)-1);
+      positions[i*3]   = r*Math.sin(phi)*Math.cos(theta);
+      positions[i*3+1] = r*Math.cos(phi);
+      positions[i*3+2] = r*Math.sin(phi)*Math.sin(theta);
+    }
+    starGeo.setAttribute('position', new THREE.BufferAttribute(positions,3));
+    const starMat = new THREE.PointsMaterial({ color:0xffffff, size:1.4, sizeAttenuation:true });
+    solarScene.add(new THREE.Points(starGeo, starMat));
+  })();
+
+  // Sol
+  const sunMat = new THREE.MeshBasicMaterial({ color: 0xffb347 });
+  const sun = new THREE.Mesh(new THREE.SphereGeometry(SUN_RADIUS, 48, 48), sunMat);
+  solarScene.add(sun);
+
+  const sunLight = new THREE.PointLight(0xfff2cc, 2.2, 0, 0);
+  sunLight.position.set(0,0,0);
+  solarScene.add(sunLight);
+  solarScene.add(new THREE.AmbientLight(0x222233, 0.6));
+
+  // órbita da Terra (linha guia)
+  (function addOrbitLine(radius, scene, color){
+    const segs = 128;
+    const pts = [];
+    for (let i=0;i<=segs;i++){
+      const a = (i/segs)*Math.PI*2;
+      pts.push(new THREE.Vector3(Math.cos(a)*radius, 0, Math.sin(a)*radius));
+    }
+    const geo = new THREE.BufferGeometry().setFromPoints(pts);
+    const mat = new THREE.LineBasicMaterial({ color, transparent:true, opacity:0.25 });
+    scene.add(new THREE.LineLoop(geo, mat));
+  })(EARTH_ORBIT_RADIUS, solarScene, 0x3399ff);
+
+  // pivot da Terra (gira em torno do Sol)
+  const earthPivot = new THREE.Object3D();
+  solarScene.add(earthPivot);
+
+  const earthMat = new THREE.MeshStandardMaterial({ color: 0x2266cc, roughness:0.8, metalness:0.05 });
+  const earth = new THREE.Mesh(new THREE.SphereGeometry(EARTH_RADIUS, 32, 32), earthMat);
+  earth.position.set(EARTH_ORBIT_RADIUS, 0, 0);
+  earthPivot.add(earth);
+
+  // pivot da Lua (gira em torno da Terra) — filho da Terra
+  const moonPivot = new THREE.Object3D();
+  earth.add(moonPivot);
+
+  const moonMat = new THREE.MeshStandardMaterial({ color: 0xaaaaaa, roughness:0.9 });
+  const moon = new THREE.Mesh(new THREE.SphereGeometry(MOON_RADIUS, 20, 20), moonMat);
+  moon.position.set(MOON_ORBIT_RADIUS, 0, 0);
+  moonPivot.add(moon);
+
+  // ===================== PLANET SURFACE SCENE =====================
+  // 4 regiões (grade 2x2), cada uma com seu vulcão e 4 tribos.
+  const REGION_SPAN = 460;        // tamanho total do mapa (lado)
+  const REGION_SIZE = 210;        // tamanho de cada região (quadrante)
+  const REGION_OFFSET = 120;      // distância do centro do mapa até o centro de cada região
+  const TRIBE_RADIUS = 55;        // raio dos marcadores de tribo ao redor do vulcão
+
+  const REGIONS = [
+    { name: 'Cinza Ardente',   cx: -REGION_OFFSET, cz: -REGION_OFFSET, color: 0x36613d },
+    { name: 'Vale Fumegante',  cx:  REGION_OFFSET, cz: -REGION_OFFSET, color: 0x2f6b46 },
+    { name: 'Rocha Negra',     cx: -REGION_OFFSET, cz:  REGION_OFFSET, color: 0x2c5a3a },
+    { name: 'Terras Vermelhas',cx:  REGION_OFFSET, cz:  REGION_OFFSET, color: 0x3d6238 },
+  ];
+  const TRIBE_COLORS = [0x2277dd, 0xdd2233, 0xf2f2f2, 0x222222];
+  const TRIBE_NAMES  = ['Azul', 'Vermelho', 'Branco', 'Preto'];
+
+  // recursos brutos que existem no mundo e entram no inventário
+  const RESOURCE_KEYS = ['graveto', 'lasca', 'corda', 'madeira', 'minerio'];
+  const RESOURCE_LABELS = { graveto:'Graveto', lasca:'Lasca de Pedra', corda:'Corda de Arbusto', madeira:'Madeira', minerio:'Minério' };
+
+  // eras de evolução: da Idade da Pedra até a Era Moderna atual.
+  // pra abrir a próxima era, precisa ter craftado TODOS os itens da era atual.
+  // cada item custa recursos de verdade do inventário (nada de "XP genérico").
+  // itens condizem com a tecnologia da época (nada de arco na era industrial etc).
+  const ERAS = [
+    { name:'Idade da Pedra', tools:[
+      { name:'Porrete de Pedra', costs:{ graveto:3 } },
+      { name:'Faca de Pedra',    costs:{ graveto:1, lasca:2 } },
+      { name:'Machado de Pedra', costs:{ graveto:2, lasca:3, corda:1 } },
+      { name:'Lança de Madeira', costs:{ graveto:3, corda:1 } },
+      { name:'Arco e Flecha',    costs:{ graveto:2, corda:2 } },
+    ]},
+    { name:'Idade do Bronze', tools:[
+      { name:'Machado de Bronze', costs:{ madeira:2, minerio:3 } },
+      { name:'Espada de Bronze',  costs:{ madeira:1, minerio:4 } },
+      { name:'Escudo de Bronze',  costs:{ madeira:2, minerio:2 } },
+      { name:'Armadura de Bronze',costs:{ madeira:1, minerio:5 } },
+    ]},
+    { name:'Idade do Ferro', tools:[
+      { name:'Picareta de Ferro', costs:{ madeira:3, lasca:2 } },
+      { name:'Espada de Ferro',   costs:{ madeira:1, minerio:4 } },
+      { name:'Machado de Ferro',  costs:{ madeira:2, minerio:3 } },
+      { name:'Armadura de Ferro', costs:{ madeira:1, minerio:5 } },
+    ]},
+    { name:'Idade Medieval', tools:[
+      { name:'Besta',              costs:{ madeira:3, minerio:2, corda:2 } },
+      { name:'Espada Longa',       costs:{ madeira:1, minerio:5 } },
+      { name:'Armadura de Placas', costs:{ madeira:1, minerio:6 } },
+      { name:'Alabarda',           costs:{ madeira:2, minerio:4 } },
+    ]},
+    { name:'Idade Industrial', tools:[
+      { name:'Rifle',            costs:{ madeira:2, minerio:6 } },
+      { name:'Canhão Portátil',  costs:{ madeira:3, minerio:9 } },
+      { name:'Dinamite',         costs:{ minerio:4, corda:1 } },
+      { name:'Armadura de Aço',  costs:{ minerio:8 } },
+    ]},
+    { name:'Era Moderna', tools:[
+      { name:'Fuzil Automático',       costs:{ minerio:7, madeira:1 } },
+      { name:'Colete Balístico',       costs:{ minerio:5, corda:2 } },
+      { name:'Granada',                costs:{ minerio:3 } },
+      { name:'Drone de Reconhecimento',costs:{ minerio:9, madeira:1 } },
+    ]},
+  ];
+
+  // tipos de recurso coletável no mapa
+  // graveto/lasca/corda: pega na hora, sem ferramenta. árvore/minério: precisa segurar o clique (golpes) e ferramenta específica.
+  const RESOURCE_TYPES = [
+    { type:'graveto', label:'Graveto', key:'graveto', amount:2, instant:true,
+      build: () => {
+        const m = new THREE.Mesh(new THREE.CylinderGeometry(0.35,0.45,7,6), new THREE.MeshStandardMaterial({ color:0x6b4a2f }));
+        m.rotation.z = Math.PI/2.4; m.rotation.y = Math.random()*Math.PI;
+        return m;
+      }, yOff:0.6 },
+    { type:'lasca', label:'Lasca de Pedra', key:'lasca', amount:2, instant:true,
+      build: () => new THREE.Mesh(new THREE.TetrahedronGeometry(1.8,0), new THREE.MeshStandardMaterial({ color:0x8a8a8a })), yOff:0.5 },
+    { type:'arbusto', label:'Corda de Arbusto', key:'corda', amount:2, instant:true,
+      build: () => new THREE.Mesh(new THREE.IcosahedronGeometry(2.2,0), new THREE.MeshStandardMaterial({ color:0x3a7d3f })), yOff:1.6 },
+    { type:'arvore',  label:'Árvore',  key:'madeira', amount:4, instant:false, gatherTime:1.6, tool:'Machado',
+      build: () => new THREE.Mesh(new THREE.ConeGeometry(4,12,8), new THREE.MeshStandardMaterial({ color:0x2f6b34 })) , yOff:6 },
+    { type:'minerio', label:'Jazida de Minério', key:'minerio', amount:5, instant:false, gatherTime:2.2, tool:'Picareta',
+      build: () => new THREE.Mesh(new THREE.IcosahedronGeometry(3,0), new THREE.MeshStandardMaterial({ color:0x5f8fae, metalness:0.4, roughness:0.5 })), yOff:3 },
+  ];
+
+  const planetScene = new THREE.Scene();
+  planetScene.background = new THREE.Color(0x0b1a0f);
+
+  // sprite de texto (label sempre de frente pra câmera)
+  function makeTextSprite(text, { fontSize=48, color='#eaf6ff', bg='rgba(0,0,0,0.35)', scale=1 } = {}){
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+    ctx.font = `bold ${fontSize}px monospace`;
+    const padding = 16;
+    const w = ctx.measureText(text).width + padding*2;
+    const h = fontSize + padding*2;
+    canvas.width = w; canvas.height = h;
+    ctx.font = `bold ${fontSize}px monospace`;
+    ctx.fillStyle = bg;
+    ctx.fillRect(0,0,w,h);
+    ctx.fillStyle = color;
+    ctx.textBaseline = 'middle';
+    ctx.fillText(text, padding, h/2);
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.minFilter = THREE.LinearFilter;
+    const mat = new THREE.SpriteMaterial({ map: tex, depthTest:false, transparent:true });
+    const sprite = new THREE.Sprite(mat);
+    const aspect = w/h;
+    sprite.scale.set(aspect*18*scale, 18*scale, 1);
+    return sprite;
+  }
+
+  function buildVolcano(x, z){
+    const group = new THREE.Group();
+    const volcanoMat = new THREE.MeshStandardMaterial({ color: 0x5a3a2a, roughness:0.9 });
+    const volcano = new THREE.Mesh(new THREE.ConeGeometry(16, 22, 24), volcanoMat);
+    volcano.position.set(0, 11, 0);
+    group.add(volcano);
+
+    const craterMat = new THREE.MeshStandardMaterial({ color: 0xff5522, emissive: 0xff3300, emissiveIntensity:1.2 });
+    const crater = new THREE.Mesh(new THREE.CircleGeometry(5, 24), craterMat);
+    crater.rotation.x = -Math.PI/2;
+    crater.position.set(0, 21.8, 0);
+    group.add(crater);
+
+    group.position.set(x, 0, z);
+    group.userData.spin = 0.02 + Math.random()*0.01;
+    return group;
+  }
+
+  const volcanoes = [];
+  const regionGroundMeshes = [];
+
+  REGIONS.forEach((region, regionIndex) => {
+    // chão da região (também é o alvo de clique pra entrar nela)
+    const groundMat = new THREE.MeshStandardMaterial({ color: region.color, roughness:1 });
+    const ground = new THREE.Mesh(new THREE.PlaneGeometry(REGION_SIZE, REGION_SIZE), groundMat);
+    ground.rotation.x = -Math.PI/2;
+    ground.position.set(region.cx, 0, region.cz);
+    ground.userData.regionIndex = regionIndex;
+    planetScene.add(ground);
+    regionGroundMeshes.push(ground);
+
+    // borda da região
+    const borderPts = [
+      new THREE.Vector3(-REGION_SIZE/2, 0.3, -REGION_SIZE/2),
+      new THREE.Vector3( REGION_SIZE/2, 0.3, -REGION_SIZE/2),
+      new THREE.Vector3( REGION_SIZE/2, 0.3,  REGION_SIZE/2),
+      new THREE.Vector3(-REGION_SIZE/2, 0.3,  REGION_SIZE/2),
+    ];
+    const borderGeo = new THREE.BufferGeometry().setFromPoints(borderPts);
+    const border = new THREE.LineLoop(borderGeo, new THREE.LineBasicMaterial({ color:0xffffff, transparent:true, opacity:0.25 }));
+    border.position.set(region.cx, 0, region.cz);
+    planetScene.add(border);
+
+    // vulcão da região
+    const volcano = buildVolcano(region.cx, region.cz);
+    planetScene.add(volcano);
+    volcanoes.push(volcano);
+
+    // nome da região (flutuando acima do vulcão)
+    const label = makeTextSprite(region.name, { fontSize:40 });
+    label.position.set(region.cx, 40, region.cz);
+    planetScene.add(label);
+
+    // 4 tribos ao redor do vulcão da região
+    for (let i=0;i<4;i++){
+      const a = (i/4)*Math.PI*2 + Math.PI/4;
+      const tx = region.cx + Math.cos(a)*TRIBE_RADIUS;
+      const tz = region.cz + Math.sin(a)*TRIBE_RADIUS;
+
+      const marker = new THREE.Mesh(
+        new THREE.CylinderGeometry(4,4,3,16),
+        new THREE.MeshStandardMaterial({ color: TRIBE_COLORS[i] })
+      );
+      marker.position.set(tx, 1.5, tz);
+      planetScene.add(marker);
+
+      const tribeLabel = makeTextSprite(TRIBE_NAMES[i], { fontSize:26, scale:0.7 });
+      tribeLabel.position.set(tx, 10, tz);
+      planetScene.add(tribeLabel);
+    }
+  });
+
+  // chão de fundo (entre regiões) pra não ver vazio/fundo da cena
+  const bgGroundMat = new THREE.MeshStandardMaterial({ color: 0x152a1a, roughness:1 });
+  const bgGround = new THREE.Mesh(new THREE.PlaneGeometry(REGION_SPAN*1.6, REGION_SPAN*1.6), bgGroundMat);
+  bgGround.rotation.x = -Math.PI/2;
+  bgGround.position.y = -0.2;
+  planetScene.add(bgGround);
+
+  const grid = new THREE.GridHelper(REGION_SPAN, 24, 0x3a5a44, 0x1e3d26);
+  planetScene.add(grid);
+
+  planetScene.add(new THREE.HemisphereLight(0xbfd8ff, 0x2a3a2a, 0.9));
+  const planetSun = new THREE.DirectionalLight(0xffffff, 0.9);
+  planetSun.position.set(120,180,90);
+  planetScene.add(planetSun);
+
+  // ===================== GAMEPLAY SCENE (dentro de uma região) =====================
+  const GAMEPLAY_REGION_SIZE = REGION_SIZE * 10; // mapa jogável 10x maior que o quadrante do mapa-múndi
+  const NODE_COUNT = 220;
+  const GATHER_RANGE = 22;
+  const PLAYER_SPEED = 55;
+
+  // layout dos cantos: azul topo-esq, vermelho topo-dir, branco baixo-esq, preto baixo-dir, vulcão no centro
+  const TRIBE_CORNERS = [
+    { x:-1, z:-1 }, // Azul
+    { x: 1, z:-1 }, // Vermelho
+    { x:-1, z: 1 }, // Branco
+    { x: 1, z: 1 }, // Preto
+  ];
+  const CORNER_MARGIN = 130;
+
+  function buildCave(x, z){
+    const group = new THREE.Group();
+    const dirToCenter = new THREE.Vector3(-x, 0, -z).normalize();
+
+    const rockMat = new THREE.MeshStandardMaterial({ color: 0x4a4032, roughness:1 });
+    const mound = new THREE.Mesh(new THREE.IcosahedronGeometry(24, 0), rockMat);
+    mound.scale.set(1.3, 0.85, 1.15);
+    mound.position.y = 12;
+    group.add(mound);
+
+    const entrance = new THREE.Mesh(new THREE.CircleGeometry(7,20), new THREE.MeshBasicMaterial({ color:0x080808 }));
+    entrance.position.copy(dirToCenter.clone().multiplyScalar(20));
+    entrance.position.y = 8;
+    entrance.lookAt(entrance.position.clone().add(dirToCenter));
+    group.add(entrance);
+
+    group.position.set(x, 0, z);
+    group.userData.dirToCenter = dirToCenter;
+    return group;
+  }
+
+  function buildGameplayScene(region, tribeIndex){
+    const gscene = new THREE.Scene();
+    gscene.background = new THREE.Color(0x0b1a0f);
+    const half = GAMEPLAY_REGION_SIZE/2;
+
+    const groundMat = new THREE.MeshStandardMaterial({ color: region.color, roughness:1 });
+    const ground = new THREE.Mesh(new THREE.PlaneGeometry(GAMEPLAY_REGION_SIZE, GAMEPLAY_REGION_SIZE), groundMat);
+    ground.rotation.x = -Math.PI/2;
+    gscene.add(ground);
+
+    gscene.add(new THREE.GridHelper(GAMEPLAY_REGION_SIZE, 84, 0x3a5a44, 0x1e3d26));
+
+    const volcano = buildVolcano(0, 0);
+    gscene.add(volcano);
+
+    gscene.add(new THREE.HemisphereLight(0xbfd8ff, 0x2a3a2a, 0.9));
+    const dirLight = new THREE.DirectionalLight(0xffffff, 0.9);
+    dirLight.position.set(80,140,60);
+    gscene.add(dirLight);
+
+    // caverna da tribo no canto correspondente
+    const corner = TRIBE_CORNERS[tribeIndex];
+    const caveX = corner.x * (half - CORNER_MARGIN);
+    const caveZ = corner.z * (half - CORNER_MARGIN);
+    const cave = buildCave(caveX, caveZ);
+    gscene.add(cave);
+
+    // jogador (cilindro + cabeça), cor da tribo escolhida — nasce saindo da boca da caverna
+    const playerGroup = new THREE.Group();
+    const bodyMat = new THREE.MeshStandardMaterial({ color: TRIBE_COLORS[tribeIndex] });
+    const body = new THREE.Mesh(new THREE.CylinderGeometry(3,3,10,12), bodyMat);
+    body.position.y = 5;
+    playerGroup.add(body);
+    const head = new THREE.Mesh(new THREE.SphereGeometry(3.2,16,16), new THREE.MeshStandardMaterial({ color:0xd9a066 }));
+    head.position.y = 12;
+    playerGroup.add(head);
+    const dirToCenter = cave.userData.dirToCenter;
+    const spawnX = caveX + dirToCenter.x*38;
+    const spawnZ = caveZ + dirToCenter.z*38;
+    playerGroup.position.set(spawnX, 0, spawnZ);
+    gscene.add(playerGroup);
+
+    // recursos espalhados pela região (árvore / minério / pedra)
+    const nodes = [];
+    let attempts = 0;
+    while (nodes.length < NODE_COUNT && attempts < NODE_COUNT*8){
+      attempts++;
+      const x = THREE.MathUtils.randFloatSpread(GAMEPLAY_REGION_SIZE - 60);
+      const z = THREE.MathUtils.randFloatSpread(GAMEPLAY_REGION_SIZE - 60);
+      if (Math.hypot(x,z) < 45) continue; // não nasce em cima do vulcão
+      if (Math.hypot(x-spawnX, z-spawnZ) < 22) continue; // não nasce em cima do jogador
+      if (Math.hypot(x-caveX, z-caveZ) < 55) continue; // não nasce em cima da caverna
+
+      const def = RESOURCE_TYPES[Math.floor(Math.random()*RESOURCE_TYPES.length)];
+      const mesh = def.build();
+      mesh.position.set(x, def.yOff, z);
+      gscene.add(mesh);
+      mesh.userData.baseScale = mesh.scale.clone();
+      nodes.push({ mesh, type: def.type, label: def.label, key: def.key, amount: def.amount, instant: !!def.instant, gatherTime: def.gatherTime || 0, tool: def.tool || null });
+    }
+
+    return { scene: gscene, player: playerGroup, volcano, resourceNodes: nodes };
+  }
+
+  // ---------- CAMERA STATE ----------
+  const CAM_OFFSET_DIR = new THREE.Vector3(0, 0.55, 1).normalize(); // ângulo levemente de cima
+  let zoom = 0;              // 0 = visão geral do sistema, 1 = totalmente na Terra (só usado em 'solar'/'planet')
+  let scene = 'solar';       // 'solar' | 'planet' | 'gameplay'
+  let transitioning = false;
+  let uiOpen = false;
+
+  // estado da run atual dentro de uma região
+  let gameplayScene = null;
+  let player = null;
+  let gameplayVolcano = null;
+  let resourceNodes = [];
+  let currentRegion = null;
+  let currentTribeIndex = 0;
+  let inventory = { graveto:0, lasca:0, corda:0, madeira:0, minerio:0 };
+  let unlockedTools = new Set(); // chaves "EraName:ToolName"
+  let activeEraTab = 0;    // aba de era selecionada na tela de craft
+  let craftOpen = false;
+
+  const fadeEl = document.getElementById('fade');
+  const hudEl = document.getElementById('hud');
+  const planetLabelEl = document.getElementById('planetLabel');
+  const tribeSelectEl = document.getElementById('tribeSelect');
+  const gameHudEl = document.getElementById('gameHud');
+  const craftScreenEl = document.getElementById('craftScreen');
+  const craftBodyEl = document.getElementById('craftBody');
+  const exitGameBtnEl = document.getElementById('exitGameBtn');
+  const gatherMsgEl = document.getElementById('gatherMsg');
+
+  function currentScene(){
+    if (scene === 'solar') return solarScene;
+    if (scene === 'planet') return planetScene;
+    return gameplayScene || planetScene;
+  }
+
+  function updateSolarCamera(){
+    const earthWorldPos = new THREE.Vector3();
+    earth.getWorldPosition(earthWorldPos);
+
+    const t = THREE.MathUtils.clamp(zoom, 0, 1);
+    const eased = t*t*(3-2*t); // smoothstep
+
+    const focus = new THREE.Vector3().lerpVectors(new THREE.Vector3(0,0,0), earthWorldPos, eased);
+    const dist = THREE.MathUtils.lerp(MAX_CAM_DIST, MIN_CAM_DIST, eased);
+
+    const camPos = focus.clone().add(CAM_OFFSET_DIR.clone().multiplyScalar(dist));
+    camera.position.copy(camPos);
+    camera.lookAt(focus);
+  }
+
+  function updatePlanetCamera(){
+    // câmera top-down levemente angulada. zoom=0 -> visão geral das 4 regiões; zoom=1 -> aproxima do centro do mapa
+    const t = THREE.MathUtils.clamp(zoom, 0, 1);
+    const eased = t*t*(3-2*t);
+    const dist = THREE.MathUtils.lerp(380, 25, eased);
+    camera.position.set(0, dist*0.9, dist);
+    camera.lookAt(0, 0, 0);
+  }
+
+  function triggerEnterPlanet(){
+    if (transitioning) return;
+    transitioning = true;
+    fadeEl.classList.add('on');
+    setTimeout(() => {
+      scene = 'planet';
+      zoom = 0; // reinicia zoom local da vista do planeta (aqui zoom=0 é "afastado" na superfície)
+      hudEl.style.display = 'none';
+      planetLabelEl.style.display = 'block';
+      fadeEl.classList.remove('on');
+      transitioning = false;
+    }, 600);
+  }
+
+  function triggerExitPlanet(){
+    if (transitioning || scene !== 'planet') return;
+    transitioning = true;
+    fadeEl.classList.add('on');
+    setTimeout(() => {
+      scene = 'solar';
+      zoom = 0.85; // volta já um pouco perto da Terra
+      hudEl.style.display = 'block';
+      planetLabelEl.style.display = 'none';
+      fadeEl.classList.remove('on');
+      transitioning = false;
+    }, 600);
+  }
+
+  // ---------- SELEÇÃO DE TRIBO / ENTRAR NA REGIÃO ----------
+  let selectedRegionIndex = null;
+
+  function openTribeSelect(regionIndex){
+    selectedRegionIndex = regionIndex;
+    uiOpen = true;
+    document.getElementById('tribeSelectTitle').textContent = `Escolha sua tribo — ${REGIONS[regionIndex].name}`;
+    tribeSelectEl.classList.add('on');
+  }
+  function closeTribeSelect(){
+    uiOpen = false;
+    tribeSelectEl.classList.remove('on');
+  }
+  document.querySelectorAll('.tribeBtn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const tribeIdx = parseInt(btn.dataset.tribe, 10);
+      const regionIdx = selectedRegionIndex;
+      closeTribeSelect();
+      enterGameplay(regionIdx, tribeIdx);
+    });
+  });
+  document.getElementById('tribeCancel').addEventListener('click', closeTribeSelect);
+
+  function enterGameplay(regionIndex, tribeIndex){
+    if (transitioning) return;
+    transitioning = true;
+    fadeEl.classList.add('on');
+    setTimeout(() => {
+      const region = REGIONS[regionIndex];
+      const built = buildGameplayScene(region, tribeIndex);
+      gameplayScene = built.scene;
+      player = built.player;
+      gameplayVolcano = built.volcano;
+      resourceNodes = built.resourceNodes;
+      currentRegion = region;
+      currentTribeIndex = tribeIndex;
+      inventory = { graveto:0, lasca:0, corda:0, madeira:0, minerio:0 };
+      unlockedTools = new Set();
+      activeEraTab = 0;
+      craftOpen = false;
+
+      scene = 'gameplay';
+      camera.position.copy(player.position.clone().add(new THREE.Vector3(0, 70, 55)));
+      camera.lookAt(player.position);
+      planetLabelEl.style.display = 'none';
+      gameHudEl.style.display = 'block';
+      exitGameBtnEl.style.display = 'block';
+      updateGameHud();
+
+      fadeEl.classList.remove('on');
+      transitioning = false;
+    }, 600);
+  }
+
+  function exitGameplay(){
+    if (transitioning || scene !== 'gameplay') return;
+    transitioning = true;
+    fadeEl.classList.add('on');
+    setTimeout(() => {
+      scene = 'planet';
+      zoom = 0.6;
+      gameHudEl.style.display = 'none';
+      exitGameBtnEl.style.display = 'none';
+      craftScreenEl.classList.remove('on');
+      craftOpen = false;
+      planetLabelEl.style.display = 'block';
+      gameplayScene = null;
+      player = null;
+      fadeEl.classList.remove('on');
+      transitioning = false;
+    }, 600);
+  }
+  exitGameBtnEl.addEventListener('click', exitGameplay);
+
+  // ---------- ERAS / SKILLTREE ----------
+  function eraCompleted(eraIdx){
+    const era = ERAS[eraIdx];
+    return era.tools.every(tool => unlockedTools.has(era.name + ':' + tool.name));
+  }
+  function isEraUnlocked(eraIdx){
+    return eraIdx === 0 || eraCompleted(eraIdx - 1);
+  }
+  function hasToolNamed(substr){
+    for (const key of unlockedTools) {
+      const toolName = key.split(':')[1];
+      if (toolName && toolName.includes(substr)) return true;
+    }
+    return false;
+  }
+
+  function canCraft(tool){
+    return Object.entries(tool.costs).every(([k,v]) => (inventory[k]||0) >= v);
+  }
+
+  // painel pequeno sempre visível: tribo, inventário, atalho pra abrir o crafting
+  function updateGameHud(){
+    const tribeName = TRIBE_NAMES[currentTribeIndex];
+    const invHtml = RESOURCE_KEYS.map(k => `${RESOURCE_LABELS[k]}: ${inventory[k]}`).join(' &nbsp;|&nbsp; ');
+    gameHudEl.innerHTML = `
+      <b>Tribo ${tribeName}</b> — ${currentRegion ? currentRegion.name : ''}<br>
+      ${invHtml}<br>
+      <button onclick="window.__vulcanisOpenCraft()">Crafting [C]</button>
+    `;
+    if (craftOpen) updateCraftScreen();
+  }
+
+  // tela de craft: abas de era + receitas com custo em recursos reais
+  function updateCraftScreen(){
+    let tabsHtml = '<div class="eraTabs">';
+    ERAS.forEach((era, i) => {
+      const unlocked = isEraUnlocked(i);
+      const done = eraCompleted(i);
+      const cls = ['eraTab'];
+      if (i === activeEraTab) cls.push('active');
+      if (!unlocked) cls.push('locked');
+      if (done) cls.push('done');
+      tabsHtml += `<button class="${cls.join(' ')}" ${unlocked ? '' : 'disabled'} onclick="window.__vulcanisSetEraTab(${i})">${done ? '&#10003; ' : ''}${era.name}</button>`;
+    });
+    tabsHtml += '</div>';
+
+    const era = ERAS[activeEraTab];
+    const unlocked = isEraUnlocked(activeEraTab);
+    let listHtml = '';
+    if (!unlocked) {
+      listHtml = `<div class="era-locked">Bloqueado — craft todos os itens de "${ERAS[activeEraTab-1].name}" pra abrir essa era.</div>`;
+    } else {
+      era.tools.forEach((tool, tIdx) => {
+        const key = era.name + ':' + tool.name;
+        const costsHtml = Object.entries(tool.costs).map(([k,v]) => {
+          const have = inventory[k]||0;
+          const ok = have >= v;
+          return `<span class="${ok?'costOk':'costBad'}">${RESOURCE_LABELS[k]} ${have}/${v}</span>`;
+        }).join(' ');
+        if (unlockedTools.has(key)) {
+          listHtml += `<div class="craftRow done">&#10003; ${tool.name}</div>`;
+        } else {
+          listHtml += `<div class="craftRow">
+            <div>${tool.name}</div>
+            <div class="costs">${costsHtml}</div>
+            <button ${canCraft(tool) ? '' : 'disabled'} onclick="window.__vulcanisUnlockTool(${activeEraTab},${tIdx})">Craftar</button>
+          </div>`;
+        }
+      });
+    }
+
+    craftBodyEl.innerHTML = `${tabsHtml}<div class="craftList">${listHtml}</div>`;
+  }
+
+  window.__vulcanisOpenCraft = function(){
+    if (scene !== 'gameplay' || transitioning) return;
+    craftOpen = true;
+    craftScreenEl.classList.add('on');
+    cancelGather();
+    updateCraftScreen();
+  };
+  window.__vulcanisCloseCraft = function(){
+    craftOpen = false;
+    craftScreenEl.classList.remove('on');
+  };
+
+  window.__vulcanisSetEraTab = function(eraIdx){
+    if (!isEraUnlocked(eraIdx)) return;
+    activeEraTab = eraIdx;
+    updateCraftScreen();
+  };
+
+  window.__vulcanisUnlockTool = function(eraIdx, toolIdx){
+    if (!isEraUnlocked(eraIdx)) return;
+    const era = ERAS[eraIdx];
+    const tool = era.tools[toolIdx];
+    const key = era.name + ':' + tool.name;
+    if (unlockedTools.has(key)) return;
+    if (!canCraft(tool)) return;
+    Object.entries(tool.costs).forEach(([k,v]) => { inventory[k] -= v; });
+    unlockedTools.add(key);
+    updateGameHud();
+    updateCraftScreen();
+  };
+
+  function showGatherMsg(text, persist){
+    gatherMsgEl.textContent = text;
+    gatherMsgEl.style.display = 'block';
+    clearTimeout(gatherMsgEl._t);
+    if (!persist) {
+      gatherMsgEl._t = setTimeout(() => { gatherMsgEl.style.display = 'none'; }, 900);
+    }
+  }
+
+  // coleta instantânea (graveto/lasca/corda) ou por segurar o clique, golpeando (árvore/minério)
+  let gatherState = null; // { node, elapsed }
+
+  function collectNode(node){
+    const idx = resourceNodes.indexOf(node);
+    if (idx === -1) return;
+    gameplayScene.remove(node.mesh);
+    resourceNodes.splice(idx, 1);
+    inventory[node.key] = (inventory[node.key]||0) + node.amount;
+    showGatherMsg(`+${node.amount} ${node.label}`);
+    updateGameHud();
+  }
+
+  function cancelGather(){
+    if (!gatherState) return;
+    const m = gatherState.node.mesh;
+    if (m.userData.baseScale) m.scale.copy(m.userData.baseScale);
+    gatherState = null;
+    gatherMsgEl.style.display = 'none';
+  }
+
+  function tryStartGather(mesh){
+    const node = resourceNodes.find(n => n.mesh === mesh);
+    if (!node) return;
+    if (player.position.distanceTo(mesh.position) > GATHER_RANGE) {
+      showGatherMsg('Chegue mais perto pra coletar');
+      return;
+    }
+    if (node.instant) {
+      collectNode(node);
+      return;
+    }
+    if (node.tool && !hasToolNamed(node.tool)) {
+      showGatherMsg(`Precisa de ${node.tool} pra coletar isso — craft na skilltree`);
+      return;
+    }
+    // encara o recurso enquanto golpeia
+    player.rotation.y = Math.atan2(mesh.position.x - player.position.x, mesh.position.z - player.position.z);
+    gatherState = { node, elapsed: 0 };
+  }
+
+  // ---------- INPUT ----------
+  const raycaster = new THREE.Raycaster();
+  const mouseNDC = new THREE.Vector2();
+
+  function raycastFromEvent(e, targets){
+    const rect = renderer.domElement.getBoundingClientRect();
+    mouseNDC.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+    mouseNDC.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+    raycaster.setFromCamera(mouseNDC, camera);
+    const hits = raycaster.intersectObjects(targets);
+    return hits.length ? hits[0].object : null;
+  }
+
+  renderer.domElement.addEventListener('click', (e) => {
+    if (transitioning || uiOpen || scene !== 'planet') return;
+    const hit = raycastFromEvent(e, regionGroundMeshes);
+    if (hit) openTribeSelect(hit.userData.regionIndex);
+  });
+
+  renderer.domElement.addEventListener('mousedown', (e) => {
+    if (transitioning || uiOpen || craftOpen || scene !== 'gameplay' || gatherState) return;
+    const hit = raycastFromEvent(e, resourceNodes.map(n => n.mesh));
+    if (hit) tryStartGather(hit);
+  });
+  window.addEventListener('mouseup', cancelGather);
+
+  document.getElementById('craftCloseBtn').addEventListener('click', () => window.__vulcanisCloseCraft());
+
+  const keys = {};
+  window.addEventListener('keydown', (e) => {
+    const k = e.key.toLowerCase();
+    keys[k] = true;
+    if (scene !== 'gameplay') return;
+    if (k === 'escape') {
+      if (craftOpen) window.__vulcanisCloseCraft();
+      else exitGameplay();
+    } else if (k === 'c') {
+      if (craftOpen) window.__vulcanisCloseCraft();
+      else window.__vulcanisOpenCraft();
+    }
+  });
+  window.addEventListener('keyup', (e) => { keys[e.key.toLowerCase()] = false; });
+
+  window.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    if (transitioning || scene === 'gameplay') return;
+    const delta = e.deltaY * ZOOM_SENSITIVITY;
+
+    if (scene === 'solar') {
+      zoom = THREE.MathUtils.clamp(zoom - delta, 0, 1.15);
+      if (zoom >= 1) triggerEnterPlanet();
+    } else {
+      // na cena do planeta: scroll pra "fora" (deltaY negativo além do limite) volta pro sistema
+      zoom = THREE.MathUtils.clamp(zoom - delta, -0.35, 1);
+      if (zoom <= -0.3) triggerExitPlanet();
+    }
+  }, { passive:false });
+
+  window.addEventListener('resize', () => {
+    camera.aspect = window.innerWidth/window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+  });
+
+  // ---------- LOOP ----------
+  const clock = new THREE.Clock();
+  function animate(){
+    requestAnimationFrame(animate);
+    const dt = clock.getDelta();
+
+    earthPivot.rotation.y += EARTH_ORBIT_SPEED * dt;
+    earth.rotation.y += EARTH_SPIN_SPEED * dt;
+    moonPivot.rotation.y += MOON_ORBIT_SPEED * dt;
+    moon.rotation.y += MOON_SPIN_SPEED * dt;
+    sun.rotation.y += 0.01 * dt;
+
+    volcanoes.forEach(v => v.rotation.y += v.userData.spin * dt);
+
+    if (scene === 'solar') {
+      updateSolarCamera();
+    } else if (scene === 'planet') {
+      updatePlanetCamera();
+    } else if (scene === 'gameplay' && player) {
+      updateGameplay(dt);
+    }
+
+    renderer.render(currentScene(), camera);
+  }
+  animate();
+
+  function updateGameplay(dt){
+    let dx = 0, dz = 0;
+    if (!craftOpen) {
+      if (keys['w'] || keys['arrowup'])    dz -= 1;
+      if (keys['s'] || keys['arrowdown'])  dz += 1;
+      if (keys['a'] || keys['arrowleft'])  dx -= 1;
+      if (keys['d'] || keys['arrowright']) dx += 1;
+    }
+
+    if (dx !== 0 || dz !== 0) {
+      cancelGather(); // não dá pra golpear andando
+      const len = Math.hypot(dx, dz);
+      dx /= len; dz /= len;
+      const half = GAMEPLAY_REGION_SIZE/2 - 8;
+      player.position.x = THREE.MathUtils.clamp(player.position.x + dx*PLAYER_SPEED*dt, -half, half);
+      player.position.z = THREE.MathUtils.clamp(player.position.z + dz*PLAYER_SPEED*dt, -half, half);
+    }
+
+    if (gatherState) {
+      const { node } = gatherState;
+      if (!resourceNodes.includes(node) || player.position.distanceTo(node.mesh.position) > GATHER_RANGE) {
+        cancelGather();
+      } else {
+        gatherState.elapsed += dt;
+        // pulso de "golpe" no mesh do recurso
+        const swing = 1 + Math.sin(gatherState.elapsed * 14) * 0.12;
+        node.mesh.scale.copy(node.mesh.userData.baseScale).multiplyScalar(swing);
+        const pct = Math.min(100, Math.round((gatherState.elapsed / node.gatherTime) * 100));
+        showGatherMsg(`Coletando ${node.label}... ${pct}%`, true);
+        if (gatherState.elapsed >= node.gatherTime) {
+          node.mesh.scale.copy(node.mesh.userData.baseScale);
+          collectNode(node);
+          gatherState = null;
+        }
+      }
+    }
+
+    if (gameplayVolcano) gameplayVolcano.rotation.y += gameplayVolcano.userData.spin * dt;
+
+    const camOffset = new THREE.Vector3(0, 70, 55);
+    const desiredCamPos = player.position.clone().add(camOffset);
+    camera.position.lerp(desiredCamPos, Math.min(1, dt*4));
+    const lookTarget = player.position.clone();
+    lookTarget.y += 6;
+    camera.lookAt(lookTarget);
+  }
+
+})();
+</script>
+</body>
+</html>
