@@ -195,7 +195,7 @@
 </head>
 <body>
 
-<div id="versionTag">VulcaniS — protótipo v0.2</div>
+<div id="versionTag">VulcaniS — protótipo v0.3</div>
 <div id="welcomeScreen">
   <h1>Bem-vindo a Vulcanis</h1>
   <div class="hint">Um mundo de tribos, evolução e um vulcão que nunca é 100% previsível.</div>
@@ -390,6 +390,14 @@
   ];
   const TRIBE_COLORS = [0x2277dd, 0xdd2233, 0xf2f2f2, 0x222222];
   const TRIBE_NAMES  = ['Azul', 'Vermelho', 'Branco', 'Preto'];
+  // canto de cada tribo: azul topo-esq, vermelho topo-dir, branco baixo-esq, preto baixo-dir — usado
+  // tanto no mapa-múndi (visão geral) quanto dentro da região jogável, pra ficar consistente.
+  const TRIBE_CORNER_DIRS = [
+    { x:-1, z:-1 }, // Azul
+    { x: 1, z:-1 }, // Vermelho
+    { x:-1, z: 1 }, // Branco
+    { x: 1, z: 1 }, // Preto
+  ];
   const TRIBE_CAP = 10;               // máximo de jogadores por tribo
   const REGION_CAP = TRIBE_CAP * 4;   // máximo de jogadores por região (40)
 
@@ -705,11 +713,10 @@
     label.position.set(region.cx, 40, region.cz);
     planetScene.add(label);
 
-    // 4 tribos ao redor do vulcão da região
-    for (let i=0;i<4;i++){
-      const a = (i/4)*Math.PI*2 + Math.PI/4;
-      const tx = region.cx + Math.cos(a)*TRIBE_RADIUS;
-      const tz = region.cz + Math.sin(a)*TRIBE_RADIUS;
+    // 4 tribos nos cantos da região — mesmo layout usado dentro da região jogável
+    TRIBE_CORNER_DIRS.forEach((dir, i) => {
+      const tx = region.cx + dir.x*TRIBE_RADIUS;
+      const tz = region.cz + dir.z*TRIBE_RADIUS;
 
       const marker = new THREE.Mesh(
         new THREE.CylinderGeometry(4,4,3,16),
@@ -721,7 +728,7 @@
       const tribeLabel = makeTextSprite(TRIBE_NAMES[i], { fontSize:26, scale:0.7 });
       tribeLabel.position.set(tx, 10, tz);
       planetScene.add(tribeLabel);
-    }
+    });
   });
 
   // chão de fundo (entre regiões) pra não ver vazio/fundo da cena
@@ -750,12 +757,6 @@
   const HP_REGEN_PER_SEC = 1.5;         // vida regenera aos poucos só com a fome no máximo (100%)
 
   // layout dos cantos: azul topo-esq, vermelho topo-dir, branco baixo-esq, preto baixo-dir, vulcão no centro
-  const TRIBE_CORNERS = [
-    { x:-1, z:-1 }, // Azul
-    { x: 1, z:-1 }, // Vermelho
-    { x:-1, z: 1 }, // Branco
-    { x: 1, z: 1 }, // Preto
-  ];
   const CORNER_MARGIN = 130;
 
   function buildGameplayScene(region, tribeIndex){
@@ -780,7 +781,7 @@
 
     // ponto de origem da tribo no canto correspondente (sem caverna visível no mapa —
     // só define de onde o jogador "sai" e uma zona de exclusão pro spawn de recursos)
-    const corner = TRIBE_CORNERS[tribeIndex];
+    const corner = TRIBE_CORNER_DIRS[tribeIndex];
     const originX = corner.x * (half - CORNER_MARGIN);
     const originZ = corner.z * (half - CORNER_MARGIN);
     const dirToCenter = new THREE.Vector3(-originX, 0, -originZ).normalize();
@@ -1927,7 +1928,7 @@
       if (zoom >= 1) triggerEnterPlanet();
     } else if (scene === 'planet') {
       // na cena do planeta: scroll pra "fora" (deltaY negativo além do limite) volta pro sistema
-      zoom = THREE.MathUtils.clamp(zoom - delta, -0.35, 1);
+      zoom = THREE.MathUtils.clamp(zoom - delta, -0.35, 0);
       if (zoom <= -0.3) triggerExitPlanet();
     } else if (scene === 'gameplay') {
       // dentro da região: só permite afastar (1x = padrão, até ~1.8x mais longe)
