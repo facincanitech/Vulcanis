@@ -259,7 +259,7 @@
 </head>
 <body>
 
-<div id="versionTag">VulcaniS — protótipo v0.18</div>
+<div id="versionTag">VulcaniS — protótipo v0.19</div>
 <div id="welcomeScreen">
   <h1>Bem-vindo a Vulcanis</h1>
   <div class="hint">Um mundo de tribos, evolução e um vulcão que nunca é 100% previsível.</div>
@@ -628,8 +628,8 @@
     return shadow;
   }
 
-  // textura procedural pro chão da região — pontinhos de variação de tom + trilhas, tudo em cima de uma
-  // versão mais escura da cor da região (a cor "crua" sozinha, sob a luz da cena, ficava clara/lavada demais)
+  // textura procedural pro chão da região — só pontinhos de variação de tom, em cima de uma versão mais
+  // escura da cor da região (a cor "crua" sozinha, sob a luz da cena, ficava clara/lavada demais)
   function makeGameplayGroundTexture(regionColor){
     const baseColor = shadeColor(regionColor, -0.28);
     const canvas = document.createElement('canvas');
@@ -649,19 +649,6 @@
       ctx.fillStyle = '#' + new THREE.Color(shadeColor(baseColor, light)).getHexString();
       ctx.fillRect(x,y,s,s);
     }
-
-    ctx.globalAlpha = 0.14;
-    ctx.strokeStyle = '#7c5a30';
-    ctx.lineWidth = 10;
-    ctx.lineCap = 'round';
-    for (let i=0;i<5;i++){
-      const start = i/5 * 512;
-      ctx.beginPath();
-      ctx.moveTo(start, 512);
-      ctx.bezierCurveTo(start + 40, 360, 250 + Math.random()*40, 270, 256, 256);
-      ctx.stroke();
-    }
-    ctx.globalAlpha = 1;
 
     const tex = new THREE.CanvasTexture(canvas);
     tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
