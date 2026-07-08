@@ -99,6 +99,18 @@
     font-family:monospace; background:rgba(0,0,0,0.45); padding:6px 12px; border-radius:6px;
     display:none; z-index:10; pointer-events:none;
   }
+  #volcanoFlash {
+    position:fixed; inset:0; z-index:35; pointer-events:none; opacity:0;
+    transition: opacity 0.4s ease;
+  }
+  #volcanoFlash.on { opacity:1; }
+  #volcanoResultMsg {
+    position:fixed; top:38%; left:50%; transform:translate(-50%,-50%); text-align:center;
+    font-family:monospace; color:#fff; z-index:36; pointer-events:none; display:none;
+    text-shadow:0 0 8px rgba(0,0,0,0.9); max-width:80vw;
+  }
+  #volcanoResultMsg .big { font-size:22px; font-weight:bold; display:block; margin-bottom:6px; }
+  #volcanoResultMsg .small { font-size:13px; opacity:0.9; }
   .screenOverlay {
     position:fixed; inset:0; background:rgba(0,0,0,0.72); display:none;
     align-items:center; justify-content:center; z-index:40; font-family:monospace;
@@ -217,6 +229,16 @@
     <button class="screenCloseBtn" onclick="window.__vulcanisClosePlantMenu()">Cancelar</button>
   </div>
 </div>
+<div id="offerScreen" class="screenOverlay">
+  <div class="screenPanel" style="width:340px;text-align:center;">
+    <h2>Oferenda ao Vulcão</h2>
+    <div class="hint">Escolha o que oferecer. O vulcão reage com força e temperamento próprios — nunca 100% previsível.</div>
+    <div id="offerMenuBody" class="skillGrid"></div>
+    <button class="screenCloseBtn" onclick="window.__vulcanisCloseOfferMenu()">Cancelar</button>
+  </div>
+</div>
+<div id="volcanoFlash"></div>
+<div id="volcanoResultMsg"><span class="big"></span><span class="small"></span></div>
 <div id="fade"></div>
 <div id="caveTransition"><div id="caveLight"></div></div>
 
@@ -614,6 +636,8 @@
 
     group.position.set(x, 0, z);
     group.userData.spin = 0.02 + Math.random()*0.01;
+    group.userData.craterMat = craterMat;
+    group.userData.baseEmissive = 0xff3300;
     return group;
   }
 
@@ -910,6 +934,126 @@
     updateGameHud();
   }
 
+  // ---------- VULCÃO: oferendas ----------
+  // "valor" de cada recurso — quanto mais raro, mais pesa na força da reação
+  const OFFER_VALUE = { graveto:1, lasca:1, corda:1, madeira:2, minerio:3, carvao:2, ferro:4, prata:5, ouro:6 };
+  const offerScreenEl = document.getElementById('offerScreen');
+  const offerMenuBodyEl = document.getElementById('offerMenuBody');
+  const volcanoFlashEl = document.getElementById('volcanoFlash');
+  const volcanoResultMsgEl = document.getElementById('volcanoResultMsg');
+  let offerMenuOpen = false;
+
+  function handleVolcanoInteract(){
+    if (player.position.distanceTo(gameplayVolcano.position) > INTERACT_RANGE + 25) {
+      showGatherMsg('Chegue mais perto do vulcão');
+      return;
+    }
+    openOfferMenu();
+  }
+
+  function openOfferMenu(){
+    const owned = RESOURCE_KEYS.filter(k => inventory[k] > 0);
+    if (!owned.length) {
+      showGatherMsg('Você não tem nada pra oferecer ainda');
+      return;
+    }
+    offerMenuBodyEl.innerHTML = owned.map(k =>
+      `<div class="skillSquare" onclick="window.__vulcanisOfferResource('${k}')">${RESOURCE_ICONS[k]}<br>${RESOURCE_LABELS[k]} (${inventory[k]})</div>`
+    ).join('');
+    offerMenuOpen = true;
+    offerScreenEl.classList.add('on');
+  }
+  window.__vulcanisCloseOfferMenu = function(){
+    offerMenuOpen = false;
+    offerScreenEl.classList.remove('on');
+  };
+
+  function flashVolcano(colorHex, hexBg){
+    if (gameplayVolcano) {
+      const mat = gameplayVolcano.userData.craterMat;
+      mat.color.setHex(colorHex);
+      mat.emissive.setHex(colorHex);
+      mat.emissiveIntensity = 2.2;
+      setTimeout(() => {
+        mat.color.setHex(0xff5522);
+        mat.emissive.setHex(gameplayVolcano.userData.baseEmissive);
+        mat.emissiveIntensity = 1.2;
+      }, 2200);
+    }
+    volcanoFlashEl.style.background = `radial-gradient(circle at 50% 30%, ${hexBg} 0%, transparent 65%)`;
+    volcanoFlashEl.classList.add('on');
+    setTimeout(() => volcanoFlashEl.classList.remove('on'), 900);
+  }
+
+  function showVolcanoResult(big, small){
+    volcanoResultMsgEl.querySelector('.big').textContent = big;
+    volcanoResultMsgEl.querySelector('.small').textContent = small;
+    volcanoResultMsgEl.style.display = 'block';
+    clearTimeout(volcanoResultMsgEl._t);
+    volcanoResultMsgEl._t = setTimeout(() => { volcanoResultMsgEl.style.display = 'none'; }, 3200);
+  }
+
+  window.__vulcanisOfferResource = function(key){
+    const qty = inventory[key] || 0;
+    if (qty <= 0) return;
+    inventory[key] = 0;
+    window.__vulcanisCloseOfferMenu();
+
+    const magnitude = qty * (OFFER_VALUE[key] || 1);
+    const blessed = Math.random() < 0.55; // levemente favorável, mas nunca garantido
+    const roll = Math.random();
+
+    let tier; // micro | moderada | forte | maxima
+    if (magnitude < 8) tier = 'micro';
+    else if (magnitude < 20) tier = 'moderada';
+    else if (magnitude < 45) tier = 'forte';
+    else tier = 'maxima';
+
+    if (blessed) {
+      if (tier === 'micro') {
+        flashVolcano(0xffe08a, 'rgba(255,224,138,0.35)');
+        showVolcanoResult('O vulcão suspira em paz 🌫️', 'Fumaça colorida sobe da cratera.');
+      } else if (tier === 'moderada') {
+        const bonusXp = 10 + Math.floor(magnitude);
+        playerXp += bonusXp;
+        flashVolcano(0xffe08a, 'rgba(255,224,138,0.45)');
+        showVolcanoResult('Bênção do Vulcão ✨', `+${bonusXp} XP`);
+      } else if (tier === 'forte') {
+        const bonusXp = 25 + Math.floor(magnitude * 1.5);
+        playerXp += bonusXp;
+        currentHp = Math.min(MAX_HP, currentHp + 20);
+        flashVolcano(0xfff2b0, 'rgba(255,230,150,0.6)');
+        showVolcanoResult('Bênção Forte do Vulcão 🔥✨', `+${bonusXp} XP, +20 vida`);
+      } else {
+        const bonusXp = 60 + Math.floor(magnitude * 2);
+        playerXp += bonusXp;
+        currentHp = MAX_HP;
+        flashVolcano(0xffffff, 'rgba(255,255,255,0.75)');
+        showVolcanoResult('ERUPÇÃO DE BÊNÇÃO 🌋✨', `+${bonusXp} XP, vida totalmente restaurada`);
+      }
+    } else {
+      if (tier === 'micro') {
+        flashVolcano(0x552222, 'rgba(120,20,20,0.3)');
+        showVolcanoResult('O vulcão ronca, incomodado 💨', 'Cheiro podre no ar.');
+      } else if (tier === 'moderada') {
+        hunger = Math.max(0, hunger - 15);
+        flashVolcano(0x552222, 'rgba(150,20,20,0.45)');
+        showVolcanoResult('Fúria do Vulcão 😠', 'A oferenda foi perdida, e você sente fraqueza.');
+      } else if (tier === 'forte') {
+        const dmg = 20;
+        currentHp = Math.max(0, currentHp - dmg);
+        flashVolcano(0x7a1010, 'rgba(180,10,10,0.6)');
+        showVolcanoResult('Fúria Forte do Vulcão 🔥😠', `-${dmg} vida`);
+      } else {
+        const dmg = 40;
+        currentHp = Math.max(0, currentHp - dmg);
+        flashVolcano(0x3a0505, 'rgba(120,0,0,0.8)');
+        showVolcanoResult('ERUPÇÃO DE FÚRIA 🌋💀', `-${dmg} vida — cuidado, a região sente o abalo.`);
+      }
+    }
+    updateGameHud();
+  };
+
   function openPlantMenu(){
     const plantable = FARMER_ITEMS.filter(i => i.key !== 'fazendeiro' && unlockedFarmerItems.has(i.key));
     if (!plantable.length) {
@@ -985,11 +1129,15 @@
     try {
       realtimeChannel = sb.channel('region-' + regionIndex, { config: { presence: { key: myPlayerId } } });
       realtimeChannel.on('presence', { event: 'sync' }, () => {
-        syncOtherPlayers(realtimeChannel.presenceState());
+        const state = realtimeChannel.presenceState();
+        console.log('[VulcaniS] presence sync (jogo)', state);
+        syncOtherPlayers(state);
       });
-      realtimeChannel.subscribe(async (status) => {
+      realtimeChannel.subscribe(async (status, err) => {
+        console.log('[VulcaniS] status canal do jogo:', status, err || '');
         if (status === 'SUBSCRIBED' && player) {
-          await realtimeChannel.track({ tribe: currentTribeIndex, x: player.position.x, z: player.position.z });
+          const res = await realtimeChannel.track({ tribe: currentTribeIndex, x: player.position.x, z: player.position.z });
+          console.log('[VulcaniS] track() resultado:', res);
         }
       });
     } catch (e) { console.warn('Falha ao entrar no canal da região:', e); }
@@ -1156,6 +1304,7 @@
       previewChannel = sb.channel('region-' + regionIndex, { config: { presence: { key: 'preview_' + myPlayerId } } });
       previewChannel.on('presence', { event:'sync' }, () => {
         const state = previewChannel.presenceState();
+        console.log('[VulcaniS] presence sync (seletor)', state);
         const byTribe = [0,0,0,0];
         Object.keys(state).forEach(key => {
           if (key.indexOf('preview_') === 0) return;
@@ -1165,7 +1314,9 @@
         });
         updateTribeSelectCounts({ total: byTribe.reduce((a,b)=>a+b,0), byTribe });
       });
-      previewChannel.subscribe();
+      previewChannel.subscribe((status, err) => {
+        console.log('[VulcaniS] status canal do seletor:', status, err || '');
+      });
     } catch (e) { console.warn('Preview de região indisponível:', e); updateTribeSelectCounts({ total:0, byTribe:[0,0,0,0] }); }
   }
   function closeRegionPreview(){
@@ -1243,7 +1394,7 @@
       warehouse = null;
       warehouseStock = {};
       foodInventory = {};
-      interactables = [];
+      interactables = [{ mesh: gameplayVolcano, type:'volcano' }];
       plantMenuOpen = false;
       hudRefreshTimer = 0;
       activeEraTab = 0;
@@ -1660,7 +1811,7 @@
   });
 
   renderer.domElement.addEventListener('mousedown', (e) => {
-    if (transitioning || uiOpen || openScreen || plantMenuOpen || scene !== 'gameplay' || gatherState) return;
+    if (transitioning || uiOpen || openScreen || plantMenuOpen || offerMenuOpen || scene !== 'gameplay' || gatherState) return;
     const hitObj = raycastFromEvent(e, resourceNodes.map(n => n.mesh), true);
     const node = hitObj ? resolveResourceNode(hitObj) : null;
     if (node) { tryStartGather(node.mesh); return; }
@@ -1669,6 +1820,7 @@
       const obj = interactHit ? resolveInteractable(interactHit) : null;
       if (obj && obj.type === 'farm') handleFarmInteract();
       else if (obj && obj.type === 'warehouse') handleWarehouseInteract();
+      else if (obj && obj.type === 'volcano') handleVolcanoInteract();
     }
   });
   window.addEventListener('mouseup', cancelGather);
@@ -1680,6 +1832,7 @@
     if (scene !== 'gameplay') return;
     if (k === 'escape') {
       if (plantMenuOpen) window.__vulcanisClosePlantMenu();
+      else if (offerMenuOpen) window.__vulcanisCloseOfferMenu();
       else if (openScreen) window.__vulcanisCloseScreens();
       else exitGameplay();
     } else if (k === 'n') {
@@ -1744,7 +1897,7 @@
 
   function updateGameplay(dt){
     let dx = 0, dz = 0;
-    if (!openScreen && !plantMenuOpen) {
+    if (!openScreen && !plantMenuOpen && !offerMenuOpen) {
       if (keys['w'] || keys['arrowup'])    dz -= 1;
       if (keys['s'] || keys['arrowdown'])  dz += 1;
       if (keys['a'] || keys['arrowleft'])  dx -= 1;
