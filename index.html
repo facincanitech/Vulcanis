@@ -354,6 +354,21 @@
     ]},
   ];
 
+  // classe do personagem = era mais avançada já totalmente desbloqueada na Skilltree.
+  // todo mundo nasce Bárbaro; evolui de classe conforme completa cada era.
+  const CLASS_NAMES = ['Bárbaro', 'Guerreiro', 'Guerreiro de Ferro', 'Cavaleiro', 'Soldado', 'Operativo'];
+  function currentClassIndex(){
+    let completed = 0;
+    for (let i=0; i<ERAS.length; i++){
+      if (eraCompleted(i)) completed++;
+      else break;
+    }
+    return Math.min(completed, CLASS_NAMES.length-1);
+  }
+  function currentClassName(){
+    return CLASS_NAMES[currentClassIndex()];
+  }
+
   // tipos de recurso coletável no mapa
   // graveto/lasca/corda: pega na hora, sem ferramenta. árvore/jazidas: precisa segurar o clique (golpes) e ferramenta específica.
   // cada um também dá XP (usado só pra desbloquear receitas na Skilltree).
@@ -866,6 +881,7 @@
     const hpPct = Math.max(0, Math.round((currentHp / MAX_HP) * 100));
     gameHudEl.innerHTML = `
       <b>Tribo ${tribeName}</b> — ${currentRegion ? currentRegion.name : ''}<br>
+      🪓 Classe: ${currentClassName()}<br>
       ⭐ XP: ${playerXp}<br>
       ❤️ HP: ${currentHp}/${MAX_HP}
       <div class="hpBarOuter"><div class="hpBarInner" style="width:${hpPct}%"></div></div>
