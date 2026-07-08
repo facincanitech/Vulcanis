@@ -5,7 +5,13 @@
 <title>VulcaniS — Protótipo Sistema Solar</title>
 <style>
   html, body { margin:0; padding:0; overflow:hidden; background:#000; height:100%; width:100%; }
-  canvas { display:block; }
+  canvas { display:block; touch-action:none; }
+  #joystickBase, #joystickKnob {
+    position:fixed; border-radius:50%; transform:translate(-50%,-50%);
+    pointer-events:none; display:none; z-index:60;
+  }
+  #joystickBase { width:100px; height:100px; border:2px solid rgba(255,255,255,0.35); background:rgba(255,255,255,0.08); }
+  #joystickKnob { width:44px; height:44px; background:rgba(255,255,255,0.35); border:2px solid rgba(255,255,255,0.6); }
   #hud {
     position:fixed; top:50px; left:12px; color:#cfe8ff; font-family: monospace;
     font-size:13px; background:rgba(0,0,0,0.35); padding:8px 12px; border-radius:6px;
@@ -195,7 +201,7 @@
 </head>
 <body>
 
-<div id="versionTag">VulcaniS — protótipo v0.16</div>
+<div id="versionTag">VulcaniS — protótipo v0.17</div>
 <div id="welcomeScreen">
   <h1>Bem-vindo a Vulcanis</h1>
   <div class="hint">Um mundo de tribos, evolução e um vulcão que nunca é 100% previsível.</div>
@@ -234,6 +240,8 @@
 <button id="invShortcutBtn" class="screenShortcutBtn" onclick="window.__vulcanisOpenInv()">Inventário</button>
 <button id="exitGameBtn">Sair da região (ESC)</button>
 <div id="gatherMsg"></div>
+<div id="joystickBase"></div>
+<div id="joystickKnob"></div>
 <div id="skillScreen" class="screenOverlay">
   <div id="skillPanel" class="screenPanel">
     <h2>Skilltree [N]</h2>
@@ -1281,6 +1289,8 @@
   const skillShortcutBtnEl = document.getElementById('skillShortcutBtn');
   const invShortcutBtnEl = document.getElementById('invShortcutBtn');
   const gatherMsgEl = document.getElementById('gatherMsg');
+  const joystickBaseEl = document.getElementById('joystickBase');
+  const joystickKnobEl = document.getElementById('joystickKnob');
   const plantMenuEl = document.getElementById('plantMenu');
   const plantMenuBodyEl = document.getElementById('plantMenuBody');
   const minimapEl = document.getElementById('minimap');
@@ -2008,6 +2018,93 @@
     }
   });
 
+  // toque no celular: um dedo só faz as duas coisas — tap rápido e parado = clique (seleciona região / interage),
+  // segurar e arrastar = joystick de movimento. O joystick fica invisível até a pessoa arrastar de verdade.
+  function handleTapInteract(pt){
+    if (scene === 'planet') {
+      const point = raycastPointFromEvent(pt, regionGroundMeshes);
+      if (point) openTribeSelect(nearestRegionIndex(point.x, point.z));
+      return;
+    }
+    if (scene === 'gameplay' && !openScreen && !plantMenuOpen && !offerMenuOpen && interactables.length) {
+      const interactHit = raycastFromEvent(pt, interactables.map(o => o.mesh), true);
+      const obj = interactHit ? resolveInteractable(interactHit) : null;
+      if (obj && obj.type === 'farm') handleFarmInteract();
+      else if (obj && obj.type === 'warehouse') handleWarehouseInteract();
+      else if (obj && obj.type === 'volcano') handleVolcanoInteract();
+    }
+  }
+
+  const JOYSTICK_RADIUS = 50;   // px — raio máximo que o botão do joystick se afasta da origem
+  const JOYSTICK_DEADZONE = 10; // px — abaixo disso ainda conta como tap parado, não arrasto
+  const TAP_MAX_DURATION = 300; // ms
+  let touchState = null; // { id, startX, startY, startTime, dragging }
+  const touchMoveVec = { x: 0, z: 0 };
+
+  function showJoystick(x, y){
+    joystickBaseEl.style.left = x + 'px';
+    joystickBaseEl.style.top = y + 'px';
+    joystickBaseEl.style.display = 'block';
+    joystickKnobEl.style.left = x + 'px';
+    joystickKnobEl.style.top = y + 'px';
+    joystickKnobEl.style.display = 'block';
+  }
+  function hideJoystick(){
+    joystickBaseEl.style.display = 'none';
+    joystickKnobEl.style.display = 'none';
+  }
+  function updateJoystickKnob(originX, originY, curX, curY){
+    const dx = curX - originX, dy = curY - originY;
+    const dist = Math.min(JOYSTICK_RADIUS, Math.hypot(dx, dy));
+    const angle = Math.atan2(dy, dx);
+    joystickKnobEl.style.left = (originX + Math.cos(angle) * dist) + 'px';
+    joystickKnobEl.style.top = (originY + Math.sin(angle) * dist) + 'px';
+    if (dist < JOYSTICK_DEADZONE) { touchMoveVec.x = 0; touchMoveVec.z = 0; return; }
+    touchMoveVec.x = Math.cos(angle);
+    touchMoveVec.z = Math.sin(angle);
+  }
+
+  renderer.domElement.addEventListener('touchstart', (e) => {
+    if (transitioning || uiOpen || touchState) return;
+    e.preventDefault(); // evita que o navegador sintetize mousedown/click depois do touchend
+    const t = e.changedTouches[0];
+    touchState = { id: t.identifier, startX: t.clientX, startY: t.clientY, startTime: performance.now(), dragging: false };
+  }, { passive: false });
+
+  renderer.domElement.addEventListener('touchmove', (e) => {
+    if (!touchState) return;
+    const t = Array.from(e.changedTouches).find(tt => tt.identifier === touchState.id);
+    if (!t) return;
+    const canMove = scene === 'gameplay' && !openScreen && !plantMenuOpen && !offerMenuOpen;
+    if (!canMove) return;
+    const dist = Math.hypot(t.clientX - touchState.startX, t.clientY - touchState.startY);
+    if (!touchState.dragging && dist > JOYSTICK_DEADZONE) {
+      touchState.dragging = true;
+      showJoystick(touchState.startX, touchState.startY);
+    }
+    if (touchState.dragging) {
+      e.preventDefault();
+      updateJoystickKnob(touchState.startX, touchState.startY, t.clientX, t.clientY);
+    }
+  }, { passive: false });
+
+  function endTouch(e){
+    if (!touchState) return;
+    e.preventDefault();
+    const t = Array.from(e.changedTouches).find(tt => tt.identifier === touchState.id);
+    if (!t) { touchState = null; hideJoystick(); touchMoveVec.x = 0; touchMoveVec.z = 0; return; }
+    const wasDragging = touchState.dragging;
+    const duration = performance.now() - touchState.startTime;
+    hideJoystick();
+    touchMoveVec.x = 0; touchMoveVec.z = 0;
+    if (!wasDragging && duration < TAP_MAX_DURATION && !transitioning && !uiOpen) {
+      handleTapInteract(t);
+    }
+    touchState = null;
+  }
+  renderer.domElement.addEventListener('touchend', endTouch, { passive: false });
+  renderer.domElement.addEventListener('touchcancel', endTouch, { passive: false });
+
   const keys = {};
   window.addEventListener('keydown', (e) => {
     const k = e.key.toLowerCase();
@@ -2094,6 +2191,8 @@
       if (keys['s'] || keys['arrowdown'])  dz += 1;
       if (keys['a'] || keys['arrowleft'])  dx -= 1;
       if (keys['d'] || keys['arrowright']) dx += 1;
+      dx += touchMoveVec.x;
+      dz += touchMoveVec.z;
     }
 
     const isMoving = dx !== 0 || dz !== 0;
