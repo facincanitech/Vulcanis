@@ -16,6 +16,24 @@
     font-size:11px; background:rgba(0,0,0,0.35); padding:5px 10px; border-radius:6px;
     pointer-events:none; z-index:50;
   }
+  #welcomeScreen {
+    position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); text-align:center;
+    font-family:monospace; color:#eaf6ff; background:rgba(5,10,8,0.55); backdrop-filter:blur(2px);
+    padding:28px 34px; border-radius:14px; border:1px solid rgba(255,255,255,0.15);
+    z-index:25; transition:opacity 0.5s ease; opacity:1;
+  }
+  #welcomeScreen.hidden { opacity:0; pointer-events:none; }
+  #welcomeScreen h1 { margin:0 0 8px; font-size:26px; }
+  #welcomeScreen .hint { opacity:0.75; font-size:12px; margin-bottom:18px; max-width:320px; }
+  #welcomeScreen input {
+    display:block; margin:0 auto 14px; font-family:monospace; font-size:14px;
+    padding:9px 12px; border-radius:6px; border:1px solid #567; background:#0d1a14; color:#eaf6ff;
+    text-align:center; width:220px;
+  }
+  #welcomeScreen button {
+    font-family:monospace; font-size:14px; font-weight:bold; padding:9px 22px;
+    border-radius:6px; border:none; background:#dd6a22; color:#fff; cursor:pointer;
+  }
   #minimap {
     position:fixed; top:12px; right:14px; width:140px; height:140px;
     border:2px solid rgba(255,255,255,0.5); border-radius:6px; overflow:hidden;
@@ -33,6 +51,10 @@
   #mmPlayer {
     position:absolute; width:9px; height:9px; margin:-5px; border-radius:50%;
     background:#fff200; border:2px solid #111; box-shadow:0 0 4px rgba(0,0,0,0.8);
+  }
+  .mmOther {
+    position:absolute; width:7px; height:7px; margin:-4px; border-radius:50%;
+    border:1px solid #111;
   }
   #fade {
     position:fixed; top:0; left:0; width:100%; height:100%; background:#000;
@@ -174,6 +196,12 @@
 <body>
 
 <div id="versionTag">VulcaniS — protótipo v0.2</div>
+<div id="welcomeScreen">
+  <h1>Bem-vindo a Vulcanis</h1>
+  <div class="hint">Um mundo de tribos, evolução e um vulcão que nunca é 100% previsível.</div>
+  <input id="nameInput" type="text" placeholder="Digite seu nome" maxlength="16">
+  <button id="enterBtn">Entrar</button>
+</div>
 <div id="hud">
   Scroll = zoom na Terra (aproxima e troca de tela)<br>
   Sistema em escala/velocidade artificiais
@@ -258,6 +286,7 @@
     }
   } catch (e) { console.warn('Supabase indisponível, seguindo em modo local:', e); }
   const myPlayerId = 'p_' + Math.random().toString(36).slice(2, 10);
+  let playerName = localStorage.getItem('vulcanis_name') || '';
 
   // ---------- CONFIG ----------
   const SUN_RADIUS = 18;
@@ -1081,7 +1110,7 @@
   };
 
   // ---------- MULTIPLAYER: outros jogadores visíveis, via poll na tabela (com lag, mas estável) ----------
-  function buildRemotePlayerMesh(tribeIdx){
+  function buildRemotePlayerMesh(tribeIdx, name){
     const group = new THREE.Group();
     const body = new THREE.Mesh(new THREE.CylinderGeometry(3,3,10,12), new THREE.MeshStandardMaterial({ color: TRIBE_COLORS[tribeIdx] || 0x888888 }));
     body.position.y = 5;
@@ -1089,6 +1118,11 @@
     const head = new THREE.Mesh(new THREE.SphereGeometry(3.2,16,16), new THREE.MeshStandardMaterial({ color:0xd9a066 }));
     head.position.y = 12;
     group.add(head);
+    const label = makeTextSprite(name || 'Bárbaro Anônimo', { fontSize:30, scale:0.5 });
+    label.position.y = 20;
+    group.add(label);
+    group.userData.nameLabel = label;
+    group.userData.name = name;
     return group;
   }
 
@@ -1100,7 +1134,7 @@
       seen.add(row.player_id);
       let rp = otherPlayers[row.player_id];
       if (!rp) {
-        const mesh = buildRemotePlayerMesh(row.tribe_index);
+        const mesh = buildRemotePlayerMesh(row.tribe_index, row.player_name);
         gameplayScene.add(mesh);
         rp = otherPlayers[row.player_id] = { mesh, tribe: row.tribe_index };
       }
@@ -1108,11 +1142,22 @@
         rp.mesh.children[0].material.color.setHex(TRIBE_COLORS[row.tribe_index] || 0x888888);
         rp.tribe = row.tribe_index;
       }
+      if (row.player_name && mesh_name_changed(rp.mesh, row.player_name)) {
+        rp.mesh.remove(rp.mesh.userData.nameLabel);
+        const label = makeTextSprite(row.player_name, { fontSize:30, scale:0.5 });
+        label.position.y = 20;
+        rp.mesh.add(label);
+        rp.mesh.userData.nameLabel = label;
+        rp.mesh.userData.name = row.player_name;
+      }
       rp.mesh.position.set(row.x, 0, row.z);
     });
     Object.keys(otherPlayers).forEach(id => {
       if (!seen.has(id)) { gameplayScene.remove(otherPlayers[id].mesh); delete otherPlayers[id]; }
     });
+  }
+  function mesh_name_changed(mesh, name){
+    return mesh.userData.name !== name;
   }
 
   async function fetchOtherPlayersInRegion(regionIndex){
@@ -1120,7 +1165,7 @@
     try {
       const cutoff = new Date(Date.now() - 20*1000).toISOString(); // só quem atualizou nos últimos 20s
       const { data, error } = await sb.from('player_sessions')
-        .select('player_id, tribe_index, x, z')
+        .select('player_id, player_name, tribe_index, x, z')
         .eq('region_index', regionIndex)
         .gt('last_seen', cutoff)
         .neq('player_id', myPlayerId);
@@ -1132,6 +1177,8 @@
   function clearOtherPlayers(){
     Object.values(otherPlayers).forEach(rp => { if (gameplayScene) gameplayScene.remove(rp.mesh); });
     otherPlayers = {};
+    Object.values(mmOtherEls).forEach(el => el.remove());
+    Object.keys(mmOtherEls).forEach(id => delete mmOtherEls[id]);
   }
 
   // ---------- CAMERA STATE ----------
@@ -1189,6 +1236,7 @@
     try {
       await sb.from('player_sessions').upsert({
         player_id: myPlayerId,
+        player_name: playerName || 'Bárbaro Anônimo',
         region_index: regionIndex,
         tribe_index: tribeIndex,
         x: x != null ? x : null,
@@ -1267,6 +1315,34 @@
     camera.position.set(0, dist*0.9, dist);
     camera.lookAt(0, 0, 0);
   }
+
+  // ---------- TELA DE BOAS-VINDAS (nome do jogador) ----------
+  const welcomeScreenEl = document.getElementById('welcomeScreen');
+  const nameInputEl = document.getElementById('nameInput');
+  const enterBtnEl = document.getElementById('enterBtn');
+  nameInputEl.value = playerName;
+  let welcomeDismissed = false;
+  let autoZoomActive = false;
+
+  function dismissWelcome(){
+    if (welcomeDismissed) return;
+    welcomeDismissed = true;
+    welcomeScreenEl.classList.add('hidden');
+  }
+  function confirmName(){
+    const val = nameInputEl.value.trim();
+    playerName = val || 'Bárbaro Anônimo';
+    localStorage.setItem('vulcanis_name', playerName);
+  }
+  enterBtnEl.addEventListener('click', () => {
+    confirmName();
+    dismissWelcome();
+    autoZoomActive = true;
+  });
+  nameInputEl.addEventListener('keydown', (e) => {
+    e.stopPropagation();
+    if (e.key === 'Enter') enterBtnEl.click();
+  });
 
   function triggerEnterPlanet(){
     if (transitioning) return;
@@ -1846,6 +1922,7 @@
     const delta = e.deltaY * ZOOM_SENSITIVITY;
 
     if (scene === 'solar') {
+      dismissWelcome();
       zoom = THREE.MathUtils.clamp(zoom - delta, 0, 1.15);
       if (zoom >= 1) triggerEnterPlanet();
     } else if (scene === 'planet') {
@@ -1883,6 +1960,10 @@
     volcanoes.forEach(v => v.rotation.y += v.userData.spin * dt);
 
     if (scene === 'solar') {
+      if (autoZoomActive && !transitioning) {
+        zoom = Math.min(1.05, zoom + dt*0.6);
+        if (zoom >= 1) { autoZoomActive = false; triggerEnterPlanet(); }
+      }
       updateSolarCamera();
     } else if (scene === 'planet') {
       updatePlanetCamera();
@@ -1982,12 +2063,38 @@
     updateMinimap();
   }
 
+  const mmOtherEls = {}; // player_id -> div no minimapa
+
   function updateMinimap(){
     const half = GAMEPLAY_REGION_SIZE/2;
-    const px = ((player.position.x + half) / GAMEPLAY_REGION_SIZE) * 140;
-    const pz = ((player.position.z + half) / GAMEPLAY_REGION_SIZE) * 140;
-    mmPlayerEl.style.left = px + 'px';
-    mmPlayerEl.style.top = pz + 'px';
+    const toPx = (x, z) => ({
+      left: ((x + half) / GAMEPLAY_REGION_SIZE) * 140,
+      top:  ((z + half) / GAMEPLAY_REGION_SIZE) * 140,
+    });
+
+    const mine = toPx(player.position.x, player.position.z);
+    mmPlayerEl.style.left = mine.left + 'px';
+    mmPlayerEl.style.top = mine.top + 'px';
+
+    const seen = new Set();
+    Object.keys(otherPlayers).forEach(id => {
+      const rp = otherPlayers[id];
+      seen.add(id);
+      let dot = mmOtherEls[id];
+      if (!dot) {
+        dot = document.createElement('div');
+        dot.className = 'mmOther';
+        minimapEl.appendChild(dot);
+        mmOtherEls[id] = dot;
+      }
+      dot.style.background = '#' + (TRIBE_COLORS[rp.tribe] != null ? TRIBE_COLORS[rp.tribe].toString(16).padStart(6,'0') : '888888');
+      const pos = toPx(rp.mesh.position.x, rp.mesh.position.z);
+      dot.style.left = pos.left + 'px';
+      dot.style.top = pos.top + 'px';
+    });
+    Object.keys(mmOtherEls).forEach(id => {
+      if (!seen.has(id)) { mmOtherEls[id].remove(); delete mmOtherEls[id]; }
+    });
   }
 
 })();
