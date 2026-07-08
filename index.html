@@ -195,7 +195,7 @@
 </head>
 <body>
 
-<div id="versionTag">VulcaniS — protótipo v0.13</div>
+<div id="versionTag">VulcaniS — protótipo v0.14</div>
 <div id="welcomeScreen">
   <h1>Bem-vindo a Vulcanis</h1>
   <div class="hint">Um mundo de tribos, evolução e um vulcão que nunca é 100% previsível.</div>
@@ -765,6 +765,21 @@
     const spawnX = originX + dirToCenter.x*38;
     const spawnZ = originZ + dirToCenter.z*38;
     playerGroup.add(head);
+    // círculo semitransparente no chão mostrando o alcance de coleta/interação por proximidade
+    const rangeFill = new THREE.Mesh(
+      new THREE.CircleGeometry(GATHER_RANGE, 48),
+      new THREE.MeshBasicMaterial({ color:0xffe27a, transparent:true, opacity:0.10, side:THREE.DoubleSide, depthWrite:false })
+    );
+    rangeFill.rotation.x = -Math.PI/2;
+    rangeFill.position.y = 0.3;
+    playerGroup.add(rangeFill);
+    const rangeEdge = new THREE.Mesh(
+      new THREE.RingGeometry(GATHER_RANGE - 0.8, GATHER_RANGE, 48),
+      new THREE.MeshBasicMaterial({ color:0xffe27a, transparent:true, opacity:0.45, side:THREE.DoubleSide, depthWrite:false })
+    );
+    rangeEdge.rotation.x = -Math.PI/2;
+    rangeEdge.position.y = 0.31;
+    playerGroup.add(rangeEdge);
     playerGroup.position.set(spawnX, 0, spawnZ);
     gscene.add(playerGroup);
 
@@ -1893,24 +1908,43 @@
     gatherMsgEl.style.display = 'none';
   }
 
-  function tryStartGather(mesh){
-    const node = resourceNodes.find(n => n.mesh === mesh);
-    if (!node) return;
-    if (player.position.distanceTo(mesh.position) > GATHER_RANGE) {
-      showGatherMsg('Chegue mais perto pra coletar');
+  // coleta por proximidade — sem clique. Graveto/lasca/corda somem assim que o jogador passa perto/por cima.
+  // árvore/jazidas ainda exigem ferramenta e o jogador parado, golpeando automaticamente; sem ferramenta, só avisa.
+  let gatherWarnedNode = null;
+  let gatherWarnTimer = 0;
+
+  function updateAutoGather(dt, isMoving){
+    // instantâneos: coleta assim que entra no alcance, mesmo andando
+    for (let i = resourceNodes.length - 1; i >= 0; i--) {
+      const node = resourceNodes[i];
+      if (node.instant && player.position.distanceTo(node.mesh.position) <= GATHER_RANGE) {
+        collectNode(node);
+      }
+    }
+
+    if (isMoving || gatherState) return; // precisa estar parado pra golpear, e só um recurso por vez
+
+    let target = null, bestDist = Infinity;
+    resourceNodes.forEach(node => {
+      if (node.instant) return;
+      const d = player.position.distanceTo(node.mesh.position);
+      if (d <= GATHER_RANGE && d < bestDist) { bestDist = d; target = node; }
+    });
+    if (!target) { gatherWarnedNode = null; return; }
+
+    if (target.tool && !hasToolNamed(target.tool)) {
+      gatherWarnTimer += dt;
+      if (gatherWarnedNode !== target || gatherWarnTimer >= 2.5) {
+        gatherWarnedNode = target;
+        gatherWarnTimer = 0;
+        showGatherMsg(`Precisa de ${target.tool} pra coletar isso — desbloqueie em [T] e craft em [I]`);
+      }
       return;
     }
-    if (node.instant) {
-      collectNode(node);
-      return;
-    }
-    if (node.tool && !hasToolNamed(node.tool)) {
-      showGatherMsg(`Precisa de ${node.tool} pra coletar isso — desbloqueie em [T] e craft em [I]`);
-      return;
-    }
-    // encara o recurso enquanto golpeia
-    player.rotation.y = Math.atan2(mesh.position.x - player.position.x, mesh.position.z - player.position.z);
-    gatherState = { node, elapsed: 0 };
+
+    gatherWarnedNode = null;
+    player.rotation.y = Math.atan2(target.mesh.position.x - player.position.x, target.mesh.position.z - player.position.z);
+    gatherState = { node: target, elapsed: 0 };
   }
 
   // ---------- INPUT ----------
@@ -1953,9 +1987,6 @@
     }
     return null;
   }
-  function resolveResourceNode(hitObject){
-    return resolveFromList(hitObject, resourceNodes, n => n.mesh);
-  }
   function resolveInteractable(hitObject){
     return resolveFromList(hitObject, interactables, o => o.mesh);
   }
@@ -1967,10 +1998,7 @@
   });
 
   renderer.domElement.addEventListener('mousedown', (e) => {
-    if (transitioning || uiOpen || openScreen || plantMenuOpen || offerMenuOpen || scene !== 'gameplay' || gatherState) return;
-    const hitObj = raycastFromEvent(e, resourceNodes.map(n => n.mesh), true);
-    const node = hitObj ? resolveResourceNode(hitObj) : null;
-    if (node) { tryStartGather(node.mesh); return; }
+    if (transitioning || uiOpen || openScreen || plantMenuOpen || offerMenuOpen || scene !== 'gameplay') return;
     if (interactables.length) {
       const interactHit = raycastFromEvent(e, interactables.map(o => o.mesh), true);
       const obj = interactHit ? resolveInteractable(interactHit) : null;
@@ -1979,7 +2007,6 @@
       else if (obj && obj.type === 'volcano') handleVolcanoInteract();
     }
   });
-  window.addEventListener('mouseup', cancelGather);
 
   const keys = {};
   window.addEventListener('keydown', (e) => {
@@ -2069,7 +2096,8 @@
       if (keys['d'] || keys['arrowright']) dx += 1;
     }
 
-    if (dx !== 0 || dz !== 0) {
+    const isMoving = dx !== 0 || dz !== 0;
+    if (isMoving) {
       cancelGather(); // não dá pra golpear andando
       const len = Math.hypot(dx, dz);
       dx /= len; dz /= len;
@@ -2077,6 +2105,8 @@
       player.position.x = THREE.MathUtils.clamp(player.position.x + dx*PLAYER_SPEED*dt, -half, half);
       player.position.z = THREE.MathUtils.clamp(player.position.z + dz*PLAYER_SPEED*dt, -half, half);
     }
+
+    if (!openScreen && !plantMenuOpen && !offerMenuOpen) updateAutoGather(dt, isMoving);
 
     if (gatherState) {
       const { node } = gatherState;
