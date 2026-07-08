@@ -252,22 +252,6 @@
   const SUPABASE_URL = 'https://soiiywujkyswklhmcaak.supabase.co';
   const SUPABASE_KEY = 'sb_publishable_E2qrkMW4tdlqEPyhLrfFDA_ZCfbR4pa';
   let sb = null;
-  // intercepta o WebSocket bruto pra logar o motivo real de fechamento (funciona em qualquer versão da lib)
-  try {
-    const NativeWebSocket = window.WebSocket;
-    window.WebSocket = function(...args){
-      const ws = new NativeWebSocket(...args);
-      if (String(args[0]).indexOf('realtime') !== -1) {
-        ws.addEventListener('open', () => console.log('[VulcaniS] socket ABERTO'));
-        ws.addEventListener('close', (e) => console.log('[VulcaniS] socket FECHADO code=' + e.code + ' reason="' + e.reason + '" limpo=' + e.wasClean));
-        ws.addEventListener('error', (e) => console.log('[VulcaniS] socket ERRO', e));
-      }
-      return ws;
-    };
-    window.WebSocket.prototype = NativeWebSocket.prototype;
-    Object.assign(window.WebSocket, NativeWebSocket);
-  } catch (e) { console.warn('Não deu pra interceptar WebSocket:', e); }
-
   try {
     if (window.supabase && window.supabase.createClient) {
       sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
@@ -1096,7 +1080,7 @@
     showGatherMsg('Plantado — clique de novo pra regar 💧');
   };
 
-  // ---------- MULTIPLAYER: presence por região ----------
+  // ---------- MULTIPLAYER: outros jogadores visíveis, via poll na tabela (com lag, mas estável) ----------
   function buildRemotePlayerMesh(tribeIdx){
     const group = new THREE.Group();
     const body = new THREE.Mesh(new THREE.CylinderGeometry(3,3,10,12), new THREE.MeshStandardMaterial({ color: TRIBE_COLORS[tribeIdx] || 0x888888 }));
@@ -1108,82 +1092,44 @@
     return group;
   }
 
-  function syncOtherPlayers(presenceState){
+  function applyOtherPlayersFromRows(rows){
     if (!gameplayScene) return;
     const seen = new Set();
-    Object.keys(presenceState).forEach(key => {
-      if (key === myPlayerId) return;
-      const entries = presenceState[key];
-      if (!entries || !entries.length) return;
-      const data = entries[entries.length - 1];
-      seen.add(key);
-      let rp = otherPlayers[key];
+    rows.forEach(row => {
+      if (row.x == null || row.z == null) return;
+      seen.add(row.player_id);
+      let rp = otherPlayers[row.player_id];
       if (!rp) {
-        const mesh = buildRemotePlayerMesh(data.tribe);
+        const mesh = buildRemotePlayerMesh(row.tribe_index);
         gameplayScene.add(mesh);
-        rp = otherPlayers[key] = { mesh, tribe: data.tribe };
+        rp = otherPlayers[row.player_id] = { mesh, tribe: row.tribe_index };
       }
-      if (rp.tribe !== data.tribe) {
-        rp.mesh.children[0].material.color.setHex(TRIBE_COLORS[data.tribe] || 0x888888);
-        rp.tribe = data.tribe;
+      if (rp.tribe !== row.tribe_index) {
+        rp.mesh.children[0].material.color.setHex(TRIBE_COLORS[row.tribe_index] || 0x888888);
+        rp.tribe = row.tribe_index;
       }
-      if (typeof data.x === 'number' && typeof data.z === 'number') {
-        rp.mesh.position.set(data.x, 0, data.z);
-      }
+      rp.mesh.position.set(row.x, 0, row.z);
     });
-    Object.keys(otherPlayers).forEach(key => {
-      if (!seen.has(key)) {
-        gameplayScene.remove(otherPlayers[key].mesh);
-        delete otherPlayers[key];
-      }
+    Object.keys(otherPlayers).forEach(id => {
+      if (!seen.has(id)) { gameplayScene.remove(otherPlayers[id].mesh); delete otherPlayers[id]; }
     });
   }
 
-  // canal único por região/aba: abre só observando (pro seletor), e "vira" jogador de verdade
-  // quando dá track() — evita ter dois canais pro mesmo tópico brigando entre si.
-  function ensureRegionChannel(regionIndex){
-    if (regionChannel && regionChannelIndex === regionIndex) return regionChannel;
-    closeRegionChannel();
-    if (!sb) return null;
+  async function fetchOtherPlayersInRegion(regionIndex){
+    if (!sb || !gameplayScene) return;
     try {
-      regionChannel = sb.channel('region-' + regionIndex, { config: { presence: { key: myPlayerId } } });
-      regionChannelIndex = regionIndex;
-      regionChannel.on('presence', { event: 'sync' }, () => {
-        const state = regionChannel.presenceState();
-        console.log('[VulcaniS] presence sync região ' + regionIndex + ' ' + JSON.stringify(state));
-        handleRegionPresence(state);
-      });
-      regionChannel.subscribe((status, err) => {
-        console.log('[VulcaniS] status canal região ' + regionIndex + ':', status, err || '');
-      });
-    } catch (e) { console.warn('Falha ao entrar no canal da região:', e); regionChannel = null; regionChannelIndex = null; }
-    return regionChannel;
+      const cutoff = new Date(Date.now() - 20*1000).toISOString(); // só quem atualizou nos últimos 20s
+      const { data, error } = await sb.from('player_sessions')
+        .select('player_id, tribe_index, x, z')
+        .eq('region_index', regionIndex)
+        .gt('last_seen', cutoff)
+        .neq('player_id', myPlayerId);
+      if (error) throw error;
+      applyOtherPlayersFromRows(data || []);
+    } catch (e) { console.warn('fetch other players falhou:', e); }
   }
 
-  function handleRegionPresence(state){
-    const byTribe = [0,0,0,0];
-    Object.keys(state).forEach(key => {
-      if (key === myPlayerId) return;
-      const entries = state[key];
-      const data = entries && entries[entries.length - 1];
-      if (data && typeof data.tribe === 'number' && data.tribe >= 0 && data.tribe < 4) byTribe[data.tribe]++;
-    });
-    updateTribeSelectCounts({ total: byTribe.reduce((a,b) => a+b, 0), byTribe });
-    if (scene === 'gameplay') syncOtherPlayers(state);
-  }
-
-  async function trackInRegion(){
-    if (!regionChannel || !player) return;
-    const res = await regionChannel.track({ tribe: currentTribeIndex, x: player.position.x, z: player.position.z }).catch(e => e);
-    console.log('[VulcaniS] track() resultado:', res);
-  }
-
-  function closeRegionChannel(){
-    if (regionChannel && sb) {
-      try { sb.removeChannel(regionChannel); } catch (e) {}
-    }
-    regionChannel = null;
-    regionChannelIndex = null;
+  function clearOtherPlayers(){
     Object.values(otherPlayers).forEach(rp => { if (gameplayScene) gameplayScene.remove(rp.mesh); });
     otherPlayers = {};
   }
@@ -1202,6 +1148,7 @@
   let gameplayVolcano = null;
   let resourceNodes = [];
   let currentRegion = null;
+  let currentRegionIndex = null;
   let currentTribeIndex = 0;
   let inventory = { graveto:0, lasca:0, corda:0, madeira:0, minerio:0, ferro:0, ouro:0, prata:0, carvao:0 };
   let spawnMoreResource = null; // função que tenta nascer +1 recurso na região atual
@@ -1229,13 +1176,49 @@
   let plantMenuOpen = false;
   let hudRefreshTimer = 0;
 
-  // multiplayer: um canal por região (aba observa e depois "vira" jogador com track), jogadores remotos visíveis
-  let regionChannel = null;
-  let regionChannelIndex = null;
-  let otherPlayers = {}; // id -> { mesh, targetX, targetZ }
-  let presenceTimer = 0;
-  const PRESENCE_SEND_INTERVAL = 2; // segundos entre updates de posição (reduzido pra não bater rate limit)
+  // multiplayer: outros jogadores visíveis via poll no banco (com lag, mas não depende de WebSocket)
+  let otherPlayers = {}; // id -> { mesh, tribe }
   let previewCounts = { total:0, byTribe:[0,0,0,0] };
+  let tribeSelectPollTimer = null;
+  let dbHeartbeatTimer = 0;
+  const DB_HEARTBEAT_INTERVAL = 4; // segundos — também serve pra mostrar a posição dos outros (com lag)
+
+  // ---------- contagem + posição via banco (player_sessions) — sobrevive a queda de WebSocket ----------
+  async function upsertPlayerSession(regionIndex, tribeIndex, x, z){
+    if (!sb) return;
+    try {
+      await sb.from('player_sessions').upsert({
+        player_id: myPlayerId,
+        region_index: regionIndex,
+        tribe_index: tribeIndex,
+        x: x != null ? x : null,
+        z: z != null ? z : null,
+        last_seen: new Date().toISOString(),
+      });
+    } catch (e) { console.warn('upsert player_sessions falhou:', e); }
+  }
+
+  async function deletePlayerSession(){
+    if (!sb) return;
+    try { await sb.from('player_sessions').delete().eq('player_id', myPlayerId); }
+    catch (e) { console.warn('delete player_sessions falhou:', e); }
+  }
+
+  async function fetchRegionCounts(regionIndex){
+    if (!sb) { updateTribeSelectCounts({ total:0, byTribe:[0,0,0,0] }); return; }
+    try {
+      const cutoff = new Date(Date.now() - 3*60*1000).toISOString(); // considera só quem deu sinal nos últimos 3min
+      const { data, error } = await sb.from('player_sessions')
+        .select('tribe_index')
+        .eq('region_index', regionIndex)
+        .gt('last_seen', cutoff)
+        .neq('player_id', myPlayerId);
+      if (error) throw error;
+      const byTribe = [0,0,0,0];
+      (data || []).forEach(row => { if (row.tribe_index >= 0 && row.tribe_index < 4) byTribe[row.tribe_index]++; });
+      updateTribeSelectCounts({ total: byTribe.reduce((a,b) => a+b, 0), byTribe });
+    } catch (e) { console.warn('fetch counts falhou:', e); updateTribeSelectCounts({ total:0, byTribe:[0,0,0,0] }); }
+  }
 
   const fadeEl = document.getElementById('fade');
   const hudEl = document.getElementById('hud');
@@ -1336,11 +1319,15 @@
     document.getElementById('tribeSelectTitle').textContent = `Escolha sua tribo — ${REGIONS[regionIndex].name}`;
     updateTribeSelectCounts({ total:0, byTribe:[0,0,0,0] });
     tribeSelectEl.classList.add('on');
-    ensureRegionChannel(regionIndex); // só observa — ninguém é contado até dar track()
+    fetchRegionCounts(regionIndex);
+    clearInterval(tribeSelectPollTimer);
+    tribeSelectPollTimer = setInterval(() => fetchRegionCounts(regionIndex), 5000);
   }
   function closeTribeSelect(){
     uiOpen = false;
     tribeSelectEl.classList.remove('on');
+    clearInterval(tribeSelectPollTimer);
+    tribeSelectPollTimer = null;
   }
   tribeBtnEls.forEach(btn => {
     btn.addEventListener('click', () => {
@@ -1355,10 +1342,7 @@
       enterGameplay(regionIdx, tribeIdx);
     });
   });
-  document.getElementById('tribeCancel').addEventListener('click', () => {
-    closeTribeSelect();
-    closeRegionChannel(); // cancelou — não tava jogando, então sai do canal
-  });
+  document.getElementById('tribeCancel').addEventListener('click', closeTribeSelect);
 
   // transição "saída da caverna": tela preta, depois um ponto de luz cresce até revelar a cena
   const caveTransitionEl = document.getElementById('caveTransition');
@@ -1419,8 +1403,10 @@
       minimapEl.style.display = 'block';
       updateGameHud();
       updateMinimap();
-      ensureRegionChannel(regionIndex); // reaproveita o canal já aberto pelo seletor, se ainda for a mesma região
-      trackInRegion();
+      currentRegionIndex = regionIndex;
+      dbHeartbeatTimer = 0;
+      upsertPlayerSession(regionIndex, tribeIndex, player.position.x, player.position.z);
+      fetchOtherPlayersInRegion(regionIndex);
 
       // o ponto de luz cresce, revelando a cena — como saindo de dentro da caverna
       caveLightEl.style.transition = 'width 1.1s ease-out, height 1.1s ease-out';
@@ -1440,7 +1426,9 @@
     transitioning = true;
     fadeEl.classList.add('on');
     setTimeout(() => {
-      closeRegionChannel();
+      clearOtherPlayers();
+      deletePlayerSession();
+      currentRegionIndex = null;
       scene = 'planet';
       zoom = 0.6;
       gameHudEl.style.display = 'none';
@@ -1876,6 +1864,10 @@
     renderer.setSize(window.innerWidth, window.innerHeight);
   });
 
+  window.addEventListener('beforeunload', () => {
+    if (sb && currentRegionIndex !== null) deletePlayerSession(); // best-effort, pode não completar a tempo
+  });
+
   // ---------- LOOP ----------
   const clock = new THREE.Clock();
   function animate(){
@@ -1972,11 +1964,12 @@
       updateGameHud();
     }
 
-    // manda a posição pros outros jogadores da região, throttled
-    presenceTimer += dt;
-    if (presenceTimer >= PRESENCE_SEND_INTERVAL && regionChannel) {
-      presenceTimer = 0;
-      regionChannel.track({ tribe: currentTribeIndex, x: player.position.x, z: player.position.z }).catch(() => {});
+    // heartbeat no banco: manda minha posição e busca a dos outros — com lag (poucos segundos), mas estável
+    dbHeartbeatTimer += dt;
+    if (dbHeartbeatTimer >= DB_HEARTBEAT_INTERVAL) {
+      dbHeartbeatTimer = 0;
+      upsertPlayerSession(currentRegionIndex, currentTribeIndex, player.position.x, player.position.z);
+      fetchOtherPlayersInRegion(currentRegionIndex);
     }
 
     // câmera travada no personagem — sem lerp, sem lag, sem guinada. só a distância muda com o scroll.
