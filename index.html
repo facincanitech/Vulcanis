@@ -198,6 +198,7 @@
     background:linear-gradient(180deg, rgba(14,35,34,.94), rgba(6,15,17,.96)); border:1px solid rgba(159,219,206,.24);
     border-radius:10px; padding:20px; box-shadow:var(--shadow), inset 0 1px 0 rgba(255,255,255,.08);
   }
+  #invPanel { width:min(1100px, 96vw); max-height:92vh; } /* inventário com abas de era — mais largo/alto que o padrão */
   .screenPanel h2 { margin:0 0 6px; font-size:22px; color:#fff7e8; }
   .screenPanel .hint { opacity:.72; font-size:13px; line-height:1.4; margin-bottom:13px; color:#c3d7d2; }
   .eraTabs { display:flex; flex-wrap:wrap; gap:6px; margin:10px 0 12px; }
@@ -259,7 +260,7 @@
 </head>
 <body>
 
-<div id="versionTag">VulcaniS — protótipo v0.27</div>
+<div id="versionTag">VulcaniS — protótipo v0.28</div>
 <div id="welcomeScreen">
   <h1>Bem-vindo a Vulcanis</h1>
   <div class="hint">Um mundo de tribos, evolução e um vulcão que nunca é 100% previsível.</div>
@@ -1677,6 +1678,7 @@
   const MAX_HUNGER = 100;
   let hunger = MAX_HUNGER;         // fome cai com o tempo; em 0, começa a drenar vida
   let activeEraTab = 0;            // aba de era selecionada na Skilltree ('farmer' pra aba do Fazendeiro)
+  let craftActiveTab = 0;          // aba de era selecionada no Craft do Inventário ('farmer' pra fazenda/armazém)
   let openScreen = null;           // null | 'skill' | 'inv'
 
   // fazenda / armazém
@@ -2077,6 +2079,7 @@
       plantMenuTargetSlot = null;
       hudRefreshTimer = 0;
       activeEraTab = 0;
+      craftActiveTab = 0;
       openScreen = null;
       respawnTimer = 0;
       volcanoOfferCooldown = 0;
@@ -2437,66 +2440,84 @@
       <div class="slotRow"><span class="slotIcon">🛡️</span><div><div class="slotLabel">Armadura</div><div>${armorName ? `${armorName} (defesa ${def})` : '— vazio —'}</div></div></div>
     `;
 
-    let craftItemsHtml = '';
-    ERAS.forEach((era) => {
-      era.tools.forEach((tool) => {
-        const key = era.name + ':' + tool.name;
-        if (!unlockedRecipes.has(key)) return;
-        const costsHtml = Object.entries(tool.costs).map(([k,v]) => {
-          const have = inventory[k]||0;
-          const ok = have >= v;
-          return `<span class="${ok?'costOk':'costBad'}">${RESOURCE_ICONS[k]} ${have}/${v}</span>`;
-        }).join(' ');
-        if (tool.structure) {
-          // barricada: não é item pra equipar, é estrutura fixa — só um nível construído por jogador
-          const built = builtBarricadeTier === tool.structure;
-          const disabled = built || (builtBarricadeTier && builtBarricadeTier !== tool.structure) || !canAffordCosts(tool.costs);
-          craftItemsHtml += `<div class="craftRow">
-            <div>🧱 ${tool.name}${built ? ' <span style="opacity:.6">(construída)</span>' : ''}</div>
-            <div class="costs">${costsHtml}</div>
-            <div><button ${disabled ? 'disabled' : ''} onclick="window.__vulcanisBuildStructure('${tool.structure}')">${built ? 'Construída' : 'Construir'}</button></div>
-          </div>`;
-          return;
-        }
-        const owned = craftedCounts[key] || 0;
-        const slot = itemSlot(tool.name);
-        const equipped = (slot === 'armor' ? equippedArmor : equippedWeapon) === key;
-        const statTxt = tool.dmg ? `dano ${tool.dmg}` : (tool.def ? `defesa ${tool.def}` : '');
-        craftItemsHtml += `<div class="craftRow">
-          <div>${itemIcon(tool.name)} ${tool.name}${statTxt ? ` <span style="opacity:.6">[${statTxt}]</span>` : ''}${owned ? ` <span style="opacity:.6">(x${owned})</span>` : ''}</div>
-          <div class="costs">${costsHtml}</div>
-          <div>
-            <button ${canCraft(tool) ? '' : 'disabled'} onclick="window.__vulcanisCraftItem('${key}')">Craftar</button>
-            <button ${owned && !equipped ? '' : 'disabled'} onclick="window.__vulcanisEquip('${key}')">${equipped ? 'Equipado' : 'Equipar'}</button>
-          </div>
-        </div>`;
-      });
+    // abas de era no craft — mesma ideia da Skilltree, só que aqui filtra o que já foi desbloqueado
+    let craftTabsHtml = '<div class="eraTabs">';
+    ERAS.forEach((era, i) => {
+      const unlocked = isEraUnlocked(i);
+      const cls = ['eraTab'];
+      if (craftActiveTab === i) cls.push('active');
+      if (!unlocked) cls.push('locked');
+      craftTabsHtml += `<button class="${cls.join(' ')}" ${unlocked ? '' : 'disabled'} onclick="window.__vulcanisSetCraftTab(${i})">${era.name}</button>`;
     });
-    if (!craftItemsHtml) {
-      craftItemsHtml = `<div class="era-locked">Nenhuma receita desbloqueada ainda — abra a Skilltree [N].</div>`;
+    const farmerTabUnlocked = isFarmerTabUnlocked();
+    const craftFarmerCls = ['eraTab'];
+    if (craftActiveTab === 'farmer') craftFarmerCls.push('active');
+    if (!farmerTabUnlocked) craftFarmerCls.push('locked');
+    craftTabsHtml += `<button class="${craftFarmerCls.join(' ')}" ${farmerTabUnlocked ? '' : 'disabled'} onclick="window.__vulcanisSetCraftTab('farmer')">🌾 Fazendeiro</button>`;
+    craftTabsHtml += '</div>';
+
+    function costsHtmlFor(costs){
+      return Object.entries(costs).map(([k,v]) => {
+        const have = inventory[k]||0;
+        const ok = have >= v;
+        return `<span class="${ok?'costOk':'costBad'}">${RESOURCE_ICONS[k]} ${have}/${v}</span>`;
+      }).join(' ');
     }
 
-    // construir fazenda/armazém — aparece só depois de desbloqueado no ramo Fazendeiro da Skilltree;
-    // cada um só pode ser construído uma vez (por jogador) e some da lista depois de pronto
-    let farmBuildHtml = '';
-    if (isFarmerTabUnlocked()) {
-      const buildRow = (icon, label, unlockedKey, built, costs, fnName) => {
-        const costsHtml = Object.entries(costs).map(([k,v]) => {
-          const have = inventory[k]||0;
-          const ok = have >= v;
-          return `<span class="${ok?'costOk':'costBad'}">${RESOURCE_ICONS[k]} ${have}/${v}</span>`;
-        }).join(' ');
-        const known = unlockedFarmerItems.has(unlockedKey);
-        const disabled = built || !known || !canAffordCosts(costs);
-        const btnLabel = built ? 'Construída' : (known ? 'Construir' : 'Bloqueado — Skilltree [N]');
-        return `<div class="craftRow">
-          <div>${icon} ${label}${built ? ' <span style="opacity:.6">(construída)</span>' : ''}</div>
-          <div class="costs">${costsHtml}</div>
-          <div><button ${disabled ? 'disabled' : ''} onclick="window.${fnName}()">${btnLabel}</button></div>
-        </div>`;
-      };
-      farmBuildHtml += buildRow('🌾', 'Fazenda', 'fazendeiro', !!farmPlot, FARM_BUILD_COST, '__vulcanisBuildFarm');
-      farmBuildHtml += buildRow('📦', 'Armazém', 'armazem', !!warehouse, WAREHOUSE_BUILD_COST, '__vulcanisBuildWarehouse');
+    let craftItemsHtml = '';
+    if (craftActiveTab === 'farmer') {
+      if (!farmerTabUnlocked) {
+        craftItemsHtml = `<div class="era-locked">Bloqueado — complete a Idade da Pedra pra abrir o ramo de Fazendeiro.</div>`;
+      } else {
+        const buildRow = (icon, label, unlockedKey, built, costs, fnName) => {
+          const known = unlockedFarmerItems.has(unlockedKey);
+          const disabled = built || !known || !canAffordCosts(costs);
+          const btnLabel = built ? 'Construída' : (known ? 'Construir' : 'Bloqueado — Skilltree [N]');
+          return `<div class="craftRow">
+            <div>${icon} ${label}${built ? ' <span style="opacity:.6">(construída)</span>' : ''}</div>
+            <div class="costs">${costsHtmlFor(costs)}</div>
+            <div><button ${disabled ? 'disabled' : ''} onclick="window.${fnName}()">${btnLabel}</button></div>
+          </div>`;
+        };
+        craftItemsHtml += buildRow('🌾', 'Fazenda', 'fazendeiro', !!farmPlot, FARM_BUILD_COST, '__vulcanisBuildFarm');
+        craftItemsHtml += buildRow('📦', 'Armazém', 'armazem', !!warehouse, WAREHOUSE_BUILD_COST, '__vulcanisBuildWarehouse');
+      }
+    } else {
+      const era = ERAS[craftActiveTab];
+      if (!isEraUnlocked(craftActiveTab)) {
+        craftItemsHtml = `<div class="era-locked">Bloqueado — desbloqueie a era anterior pra abrir essa.</div>`;
+      } else {
+        era.tools.forEach((tool) => {
+          const key = era.name + ':' + tool.name;
+          if (!unlockedRecipes.has(key)) return;
+          if (tool.structure) {
+            // barricada: não é item pra equipar, é estrutura fixa — só um nível construído por jogador
+            const built = builtBarricadeTier === tool.structure;
+            const disabled = built || (builtBarricadeTier && builtBarricadeTier !== tool.structure) || !canAffordCosts(tool.costs);
+            craftItemsHtml += `<div class="craftRow">
+              <div>🧱 ${tool.name}${built ? ' <span style="opacity:.6">(construída)</span>' : ''}</div>
+              <div class="costs">${costsHtmlFor(tool.costs)}</div>
+              <div><button ${disabled ? 'disabled' : ''} onclick="window.__vulcanisBuildStructure('${tool.structure}')">${built ? 'Construída' : 'Construir'}</button></div>
+            </div>`;
+            return;
+          }
+          const owned = craftedCounts[key] || 0;
+          const slot = itemSlot(tool.name);
+          const equipped = (slot === 'armor' ? equippedArmor : equippedWeapon) === key;
+          const statTxt = tool.dmg ? `dano ${tool.dmg}` : (tool.def ? `defesa ${tool.def}` : '');
+          craftItemsHtml += `<div class="craftRow">
+            <div>${itemIcon(tool.name)} ${tool.name}${statTxt ? ` <span style="opacity:.6">[${statTxt}]</span>` : ''}${owned ? ` <span style="opacity:.6">(x${owned})</span>` : ''}</div>
+            <div class="costs">${costsHtmlFor(tool.costs)}</div>
+            <div>
+              <button ${canCraft(tool) ? '' : 'disabled'} onclick="window.__vulcanisCraftItem('${key}')">Craftar</button>
+              <button ${owned && !equipped ? '' : 'disabled'} onclick="window.__vulcanisEquip('${key}')">${equipped ? 'Equipado' : 'Equipar'}</button>
+            </div>
+          </div>`;
+        });
+        if (!craftItemsHtml) {
+          craftItemsHtml = `<div class="era-locked">Nenhuma receita desbloqueada dessa era ainda — abra a Skilltree [N].</div>`;
+        }
+      }
     }
 
     const foodEntries = FARMER_ITEMS.filter(i => i.key !== 'fazendeiro' && i.key !== 'armazem' && foodInventory[i.key] > 0);
@@ -2513,12 +2534,22 @@
         </div>
         <div class="invCraftCol">
           <h3>Craft</h3>
-          ${farmBuildHtml ? `<div class="craftList" style="margin-bottom:10px">${farmBuildHtml}</div>` : ''}
+          ${craftTabsHtml}
           <div class="craftList">${craftItemsHtml}</div>
         </div>
       </div>
     `;
   }
+
+  window.__vulcanisSetCraftTab = function(tab){
+    if (tab === 'farmer') {
+      if (!isFarmerTabUnlocked()) return;
+    } else if (!isEraUnlocked(tab)) {
+      return;
+    }
+    craftActiveTab = tab;
+    updateInvScreen();
+  };
 
   window.__vulcanisEatFood = function(cropKey){
     if (!(foodInventory[cropKey] > 0)) return;
