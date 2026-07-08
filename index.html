@@ -1123,31 +1123,51 @@
     });
   }
 
-  function joinRegionChannel(regionIndex){
-    if (!sb) return;
-    leaveRegionChannel();
+  // canal único por região/aba: abre só observando (pro seletor), e "vira" jogador de verdade
+  // quando dá track() — evita ter dois canais pro mesmo tópico brigando entre si.
+  function ensureRegionChannel(regionIndex){
+    if (regionChannel && regionChannelIndex === regionIndex) return regionChannel;
+    closeRegionChannel();
+    if (!sb) return null;
     try {
-      realtimeChannel = sb.channel('region-' + regionIndex, { config: { presence: { key: myPlayerId } } });
-      realtimeChannel.on('presence', { event: 'sync' }, () => {
-        const state = realtimeChannel.presenceState();
-        console.log('[VulcaniS] presence sync (jogo) ' + JSON.stringify(state));
-        syncOtherPlayers(state);
+      regionChannel = sb.channel('region-' + regionIndex, { config: { presence: { key: myPlayerId } } });
+      regionChannelIndex = regionIndex;
+      regionChannel.on('presence', { event: 'sync' }, () => {
+        const state = regionChannel.presenceState();
+        console.log('[VulcaniS] presence sync região ' + regionIndex + ' ' + JSON.stringify(state));
+        handleRegionPresence(state);
       });
-      realtimeChannel.subscribe(async (status, err) => {
-        console.log('[VulcaniS] status canal do jogo:', status, err || '');
-        if (status === 'SUBSCRIBED' && player) {
-          const res = await realtimeChannel.track({ tribe: currentTribeIndex, x: player.position.x, z: player.position.z });
-          console.log('[VulcaniS] track() resultado:', res);
-        }
+      regionChannel.subscribe((status, err) => {
+        console.log('[VulcaniS] status canal região ' + regionIndex + ':', status, err || '');
       });
-    } catch (e) { console.warn('Falha ao entrar no canal da região:', e); }
+    } catch (e) { console.warn('Falha ao entrar no canal da região:', e); regionChannel = null; regionChannelIndex = null; }
+    return regionChannel;
   }
 
-  function leaveRegionChannel(){
-    if (realtimeChannel && sb) {
-      try { sb.removeChannel(realtimeChannel); } catch (e) {}
-      realtimeChannel = null;
+  function handleRegionPresence(state){
+    const byTribe = [0,0,0,0];
+    Object.keys(state).forEach(key => {
+      if (key === myPlayerId) return;
+      const entries = state[key];
+      const data = entries && entries[entries.length - 1];
+      if (data && typeof data.tribe === 'number' && data.tribe >= 0 && data.tribe < 4) byTribe[data.tribe]++;
+    });
+    updateTribeSelectCounts({ total: byTribe.reduce((a,b) => a+b, 0), byTribe });
+    if (scene === 'gameplay') syncOtherPlayers(state);
+  }
+
+  async function trackInRegion(){
+    if (!regionChannel || !player) return;
+    const res = await regionChannel.track({ tribe: currentTribeIndex, x: player.position.x, z: player.position.z }).catch(e => e);
+    console.log('[VulcaniS] track() resultado:', res);
+  }
+
+  function closeRegionChannel(){
+    if (regionChannel && sb) {
+      try { sb.removeChannel(regionChannel); } catch (e) {}
     }
+    regionChannel = null;
+    regionChannelIndex = null;
     Object.values(otherPlayers).forEach(rp => { if (gameplayScene) gameplayScene.remove(rp.mesh); });
     otherPlayers = {};
   }
@@ -1193,14 +1213,12 @@
   let plantMenuOpen = false;
   let hudRefreshTimer = 0;
 
-  // multiplayer: canal da região atual + jogadores remotos visíveis
-  let realtimeChannel = null;
+  // multiplayer: um canal por região (aba observa e depois "vira" jogador com track), jogadores remotos visíveis
+  let regionChannel = null;
+  let regionChannelIndex = null;
   let otherPlayers = {}; // id -> { mesh, targetX, targetZ }
   let presenceTimer = 0;
-  const PRESENCE_SEND_INTERVAL = 0.15; // segundos entre updates de posição
-
-  // preview de ocupação: só pra mostrar contadores na tela de escolha de tribo, sem contar como jogador
-  let previewChannel = null;
+  const PRESENCE_SEND_INTERVAL = 2; // segundos entre updates de posição (reduzido pra não bater rate limit)
   let previewCounts = { total:0, byTribe:[0,0,0,0] };
 
   const fadeEl = document.getElementById('fade');
@@ -1296,48 +1314,17 @@
     });
   }
 
-  // canal "de vitrine": só observa quem já tá na região, não conta o próprio jogador olhando o menu
-  function openRegionPreview(regionIndex){
-    closeRegionPreview();
-    if (!sb) { updateTribeSelectCounts({ total:0, byTribe:[0,0,0,0] }); return; }
-    try {
-      previewChannel = sb.channel('region-' + regionIndex, { config: { presence: { key: 'preview_' + myPlayerId } } });
-      previewChannel.on('presence', { event:'sync' }, () => {
-        const state = previewChannel.presenceState();
-        console.log('[VulcaniS] presence sync (seletor) ' + JSON.stringify(state));
-        const byTribe = [0,0,0,0];
-        Object.keys(state).forEach(key => {
-          if (key.indexOf('preview_') === 0) return;
-          const entries = state[key];
-          const data = entries && entries[entries.length-1];
-          if (data && typeof data.tribe === 'number' && data.tribe >= 0 && data.tribe < 4) byTribe[data.tribe]++;
-        });
-        updateTribeSelectCounts({ total: byTribe.reduce((a,b)=>a+b,0), byTribe });
-      });
-      previewChannel.subscribe((status, err) => {
-        console.log('[VulcaniS] status canal do seletor:', status, err || '');
-      });
-    } catch (e) { console.warn('Preview de região indisponível:', e); updateTribeSelectCounts({ total:0, byTribe:[0,0,0,0] }); }
-  }
-  function closeRegionPreview(){
-    if (previewChannel && sb) {
-      try { sb.removeChannel(previewChannel); } catch (e) {}
-      previewChannel = null;
-    }
-  }
-
   function openTribeSelect(regionIndex){
     selectedRegionIndex = regionIndex;
     uiOpen = true;
     document.getElementById('tribeSelectTitle').textContent = `Escolha sua tribo — ${REGIONS[regionIndex].name}`;
     updateTribeSelectCounts({ total:0, byTribe:[0,0,0,0] });
     tribeSelectEl.classList.add('on');
-    openRegionPreview(regionIndex);
+    ensureRegionChannel(regionIndex); // só observa — ninguém é contado até dar track()
   }
   function closeTribeSelect(){
     uiOpen = false;
     tribeSelectEl.classList.remove('on');
-    closeRegionPreview();
   }
   tribeBtnEls.forEach(btn => {
     btn.addEventListener('click', () => {
@@ -1352,7 +1339,10 @@
       enterGameplay(regionIdx, tribeIdx);
     });
   });
-  document.getElementById('tribeCancel').addEventListener('click', closeTribeSelect);
+  document.getElementById('tribeCancel').addEventListener('click', () => {
+    closeTribeSelect();
+    closeRegionChannel(); // cancelou — não tava jogando, então sai do canal
+  });
 
   // transição "saída da caverna": tela preta, depois um ponto de luz cresce até revelar a cena
   const caveTransitionEl = document.getElementById('caveTransition');
@@ -1413,7 +1403,8 @@
       minimapEl.style.display = 'block';
       updateGameHud();
       updateMinimap();
-      joinRegionChannel(regionIndex);
+      ensureRegionChannel(regionIndex); // reaproveita o canal já aberto pelo seletor, se ainda for a mesma região
+      trackInRegion();
 
       // o ponto de luz cresce, revelando a cena — como saindo de dentro da caverna
       caveLightEl.style.transition = 'width 1.1s ease-out, height 1.1s ease-out';
@@ -1433,7 +1424,7 @@
     transitioning = true;
     fadeEl.classList.add('on');
     setTimeout(() => {
-      leaveRegionChannel();
+      closeRegionChannel();
       scene = 'planet';
       zoom = 0.6;
       gameHudEl.style.display = 'none';
@@ -1967,9 +1958,9 @@
 
     // manda a posição pros outros jogadores da região, throttled
     presenceTimer += dt;
-    if (presenceTimer >= PRESENCE_SEND_INTERVAL && realtimeChannel) {
+    if (presenceTimer >= PRESENCE_SEND_INTERVAL && regionChannel) {
       presenceTimer = 0;
-      realtimeChannel.track({ tribe: currentTribeIndex, x: player.position.x, z: player.position.z }).catch(() => {});
+      regionChannel.track({ tribe: currentTribeIndex, x: player.position.x, z: player.position.z }).catch(() => {});
     }
 
     // câmera travada no personagem — sem lerp, sem lag, sem guinada. só a distância muda com o scroll.
