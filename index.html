@@ -259,7 +259,7 @@
 </head>
 <body>
 
-<div id="versionTag">VulcaniS — protótipo v0.25</div>
+<div id="versionTag">VulcaniS — protótipo v0.26</div>
 <div id="welcomeScreen">
   <h1>Bem-vindo a Vulcanis</h1>
   <div class="hint">Um mundo de tribos, evolução e um vulcão que nunca é 100% previsível.</div>
@@ -512,6 +512,8 @@
       { name:'Espada Longa',       xpCost:100, costs:{ madeira:1, minerio:2, ferro:3 }, dmg:34 },
       { name:'Armadura de Placas', xpCost:120, costs:{ minerio:3, ferro:4 },            def:34 },
       { name:'Alabarda',           xpCost:105, costs:{ madeira:1, minerio:2, ferro:3 }, dmg:32 },
+      // estrutura opcional, não trava a era — 5 barricadas mirradas pela tribo; tiro atravessa reduzido, corpo a corpo passa direto
+      { name:'Barricada de Madeira', xpCost:70, costs:{ madeira:15, lasca:10 }, structure:'barricade_medieval' },
     ]},
     { name:'Idade Industrial', tools:[
       { name:'Rifle',            xpCost:150, costs:{ madeira:2, ferro:6 }, dmg:45 },
@@ -524,6 +526,8 @@
       { name:'Colete Balístico',       xpCost:200, costs:{ ferro:5, corda:2 },   def:58 },
       { name:'Granada',                xpCost:160, costs:{ ferro:3 },            dmg:50 },
       { name:'Drone de Reconhecimento',xpCost:260, costs:{ ferro:9, ouro:2 },    dmg:20 },
+      // estrutura opcional — bloqueia tiro comum totalmente, mas explosivo (Dinamite/Granada/Canhão) ignora e tira 90% da vida
+      { name:'Barricada Blindada', xpCost:240, costs:{ ferro:12, minerio:6 }, structure:'barricade_moderna' },
     ]},
   ];
 
@@ -1117,6 +1121,40 @@
     return group;
   }
 
+  function buildBarricadeMesh(tier, x, z){
+    const isModerna = tier === 'barricade_moderna';
+    const mat = new THREE.MeshStandardMaterial({
+      color: isModerna ? 0x5a6a70 : 0x8a6b3f,
+      metalness: isModerna ? 0.5 : 0.05,
+      roughness: isModerna ? 0.45 : 0.9,
+    });
+    const group = new THREE.Group();
+    const h = isModerna ? 8 : 5.5;
+    const base = new THREE.Mesh(new THREE.BoxGeometry(12, h, 4), mat);
+    base.position.y = h/2;
+    group.add(base);
+    group.position.set(x, 0, z);
+    return group;
+  }
+
+  // 5 pontos de barricada por tribo, espelhados pelo canto de spawn: seguem as duas fronteiras que a
+  // tribo compartilha com as vizinhas (a que tem mesmo x, e a que tem mesmo z), do canto externo até o
+  // ponto central — afastado da base do vulcão na diagonal, já que o centro exato colide com ele
+  function tribeBarricadePositions(tribeIndex){
+    const corner = TRIBE_CORNER_DIRS[tribeIndex];
+    const half = GAMEPLAY_REGION_SIZE/2;
+    const R = half - CORNER_MARGIN;
+    const centerOffset = VOLCANO_COLLISION_RADIUS + 25;
+    const diag = centerOffset * 0.7071;
+    return [
+      { x: corner.x*R,        z: 0 },
+      { x: corner.x*R*0.5,    z: 0 },
+      { x: corner.x*diag,     z: corner.z*diag },
+      { x: 0,                 z: corner.z*R*0.5 },
+      { x: 0,                 z: corner.z*R },
+    ];
+  }
+
   // visual de um canteiro pelo seu estado: vazio (só terra), semeado (pontinhos escuros = semente + água),
   // crescendo (broto verde), pronto (fruto colorido)
   function updateFarmSlotVisual(fp, idx){
@@ -1153,6 +1191,49 @@
     slot.cropMesh = fruit;
   }
 
+  // grava uma estrutura construída (fazenda/armazém/barricada) pra todo mundo na região ver — permanece
+  // no banco pelo resto da partida, independente de quem tá online
+  async function insertRegionStructure(kind, x, z){
+    if (!sb) return;
+    try {
+      await sb.from('region_structures').insert({
+        region_index: currentRegionIndex,
+        tribe_index: currentTribeIndex,
+        player_id: myPlayerId,
+        kind, x, z,
+      });
+    } catch (e) { console.warn('insert region_structures falhou:', e); }
+  }
+
+  function renderForeignStructure(row){
+    let mesh;
+    if (row.kind === 'farm') mesh = buildFarmPlot(row.x, row.z);
+    else if (row.kind === 'warehouse') mesh = buildWarehouse(row.x, row.z);
+    else if (row.kind === 'barricade_medieval' || row.kind === 'barricade_moderna') mesh = buildBarricadeMesh(row.kind, row.x, row.z);
+    else return;
+    gameplayScene.add(mesh);
+  }
+
+  // busca tudo que já foi construído na região (por qualquer jogador) — chamado ao entrar e de longe em
+  // longe depois (estrutura é fixa, não precisa do ritmo de heartbeat de posição)
+  async function fetchRegionStructures(regionIndex){
+    if (!sb || !gameplayScene) return;
+    try {
+      const { data, error } = await sb.from('region_structures')
+        .select('id, tribe_index, player_id, kind, x, z')
+        .eq('region_index', regionIndex);
+      if (error) throw error;
+      (data || []).forEach(row => {
+        if (seenStructureIds.has(row.id)) return;
+        seenStructureIds.add(row.id);
+        if (row.player_id !== myPlayerId) renderForeignStructure(row);
+      });
+      allBarricadePoints = (data || [])
+        .filter(r => r.kind === 'barricade_medieval' || r.kind === 'barricade_moderna')
+        .map(r => ({ x: r.x, z: r.z, tier: r.kind }));
+    } catch (e) { console.warn('fetch region_structures falhou:', e); }
+  }
+
   // constrói a fazenda pessoal perto do spawn da tribo — chamado só ao craftar "Fazenda" no inventário
   function placeFarmPlot(){
     if (!gameplayScene || !originDir || farmPlot) return;
@@ -1168,6 +1249,7 @@
       plots: Array.from({ length: FARM_PLOTS_PER_FARM }, () => ({ state:'empty', crop:null, growElapsed:0, cropMesh:null })),
     };
     interactables.push({ mesh, type:'farm' });
+    insertRegionStructure('farm', pos.x, pos.z);
   }
 
   // constrói o armazém da tribo perto do spawn — chamado só ao craftar "Armazém" no inventário
@@ -1180,6 +1262,28 @@
     gameplayScene.add(mesh);
     warehouse = { mesh };
     interactables.push({ mesh, type:'warehouse' });
+    insertRegionStructure('warehouse', pos.x, pos.z);
+  }
+
+  // constrói as 5 barricadas espelhadas da tribo — chamado só ao craftar na Skilltree/Inventário.
+  // só um nível por jogador (a moderna substitui a necessidade da fraca, não empilha)
+  function placeBarricades(tier){
+    if (!gameplayScene || builtBarricadeTier) return;
+    tribeBarricadePositions(currentTribeIndex).forEach(p => {
+      const mesh = buildBarricadeMesh(tier, p.x, p.z);
+      gameplayScene.add(mesh);
+      allBarricadePoints.push({ x:p.x, z:p.z, tier });
+      insertRegionStructure(tier, p.x, p.z);
+    });
+    builtBarricadeTier = tier;
+  }
+
+  function toolByStructureKind(kind){
+    for (const era of ERAS) {
+      const found = era.tools.find(t => t.structure === kind);
+      if (found) return { tool: found, key: era.name + ':' + found.name };
+    }
+    return null;
   }
 
   window.__vulcanisBuildFarm = function(){
@@ -1197,6 +1301,15 @@
     updateGameHud();
     updateInvScreen();
     showGatherMsg('Armazém construído 📦');
+  };
+  window.__vulcanisBuildStructure = function(kind){
+    const found = toolByStructureKind(kind);
+    if (!found || !unlockedRecipes.has(found.key) || builtBarricadeTier || !canAffordCosts(found.tool.costs)) return;
+    spendCosts(found.tool.costs);
+    placeBarricades(kind);
+    updateGameHud();
+    updateInvScreen();
+    showGatherMsg('Barricadas construídas 🧱');
   };
 
   function foodTotal(inv){
@@ -1577,6 +1690,14 @@
   let plantMenuOpen = false;
   let hudRefreshTimer = 0;
 
+  // estruturas sincronizadas (fazenda/armazém/barricada de todo mundo na região — árvore/pedra/graveto
+  // continuam só locais, não precisam ser vistos por todos)
+  let builtBarricadeTier = null;  // null | 'barricade_medieval' | 'barricade_moderna' — a própria, uma só por jogador
+  let allBarricadePoints = [];    // [{x,z,tier}] de TODA a região (própria + de todo mundo), usado no cálculo de abrigo
+  let seenStructureIds = new Set();
+  let structureFetchTimer = 0;
+  const STRUCTURE_FETCH_INTERVAL = 45; // segundos — bem mais espaçado que o heartbeat de posição, estruturas são fixas
+
   // multiplayer: outros jogadores visíveis via poll no banco (com lag, mas não depende de WebSocket)
   let otherPlayers = {}; // id -> { mesh, tribe }
   let previewCounts = { total:0, byTribe:[0,0,0,0] };
@@ -1828,6 +1949,10 @@
       openScreen = null;
       respawnTimer = 0;
       volcanoOfferCooldown = 0;
+      builtBarricadeTier = null;
+      allBarricadePoints = [];
+      seenStructureIds = new Set();
+      structureFetchTimer = 0;
 
       scene = 'gameplay';
       gameplayZoom = 1.8; // já começa afastado
@@ -1845,6 +1970,7 @@
       dbHeartbeatTimer = 0;
       upsertPlayerSession(regionIndex, tribeIndex, player.position.x, player.position.z);
       fetchOtherPlayersInRegion(regionIndex);
+      fetchRegionStructures(regionIndex);
 
       // o ponto de luz cresce, revelando a cena — como saindo de dentro da caverna
       caveLightEl.style.transition = 'width 1.1s ease-out, height 1.1s ease-out';
@@ -1890,7 +2016,8 @@
   // "desbloquear" (Skilltree/T) = conhecer a receita. "craftar" (Inventário/I) = gastar recursos e ganhar o item.
   function eraCompleted(eraIdx){
     const era = ERAS[eraIdx];
-    return era.tools.every(tool => unlockedRecipes.has(era.name + ':' + tool.name));
+    // barricada é opcional — não trava a progressão de era, igual o ramo Fazendeiro
+    return era.tools.filter(tool => !tool.structure).every(tool => unlockedRecipes.has(era.name + ':' + tool.name));
   }
   function isEraUnlocked(eraIdx){
     return eraIdx === 0 || eraCompleted(eraIdx - 1);
@@ -1938,10 +2065,27 @@
 
   // ---------- COMBATE: sem clique/mira — aproximação automática, alcance varia por tipo de arma ----------
   const RANGED_WEAPON_REGEX = /Arco|Besta|Rifle|Fuzil|Canhão/;
+  const EXPLOSIVE_WEAPON_REGEX = /Dinamite|Granada|Canhão/;
   const MELEE_RANGE = 20;
   const RANGED_RANGE = 75;
   const ATTACK_COOLDOWN = 1.3;
   let attackTimer = 0;
+
+  // ---------- BARRICADAS: abrigo contra tiro (corpo a corpo sempre passa direto) ----------
+  const SHELTER_RADIUS = 14;
+  const BARRICADE_MEDIEVAL_RANGED_MULT = 0.5; // fraca: reduz dano de tiro, não bloqueia
+  // moderna: bloqueia tiro comum (mult 0), mas explosivo (Dinamite/Granada/Canhão) ignora e tira 90% da vida atual
+
+  // acha o abrigo mais forte perto de um ponto (null | 'barricade_medieval' | 'barricade_moderna')
+  function shelterTierAt(x, z){
+    let best = null;
+    allBarricadePoints.forEach(p => {
+      if (Math.hypot(p.x - x, p.z - z) > SHELTER_RADIUS) return;
+      if (p.tier === 'barricade_moderna') best = 'barricade_moderna';
+      else if (!best) best = 'barricade_medieval';
+    });
+    return best;
+  }
 
   function getAttackRange(){
     const name = itemNameFromKey(equippedWeapon);
@@ -1962,10 +2106,30 @@
   }
 
   async function attackPlayer(id, rp){
+    const myWeaponName = itemNameFromKey(equippedWeapon);
     const myDmg = getEquippedDmg() || 3; // desarmado ainda dá um tapa fraco
     const theirDefTool = toolByName(rp.armor);
     const theirDef = theirDefTool && theirDefTool.def ? theirDefTool.def : 0;
-    const dmg = Math.max(3, myDmg - theirDef);
+    let dmg = Math.max(3, myDmg - theirDef);
+
+    const isRanged = myWeaponName && RANGED_WEAPON_REGEX.test(myWeaponName);
+    if (isRanged) {
+      const shelter = shelterTierAt(rp.mesh.position.x, rp.mesh.position.z);
+      if (shelter === 'barricade_moderna') {
+        if (myWeaponName && EXPLOSIVE_WEAPON_REGEX.test(myWeaponName)) {
+          dmg = Math.max(1, Math.round((rp.hp || 100) * 0.9)); // explosivo ignora a barricada forte, quase mata
+        } else {
+          dmg = 0; // barricada moderna bloqueia tiro comum totalmente
+        }
+      } else if (shelter === 'barricade_medieval') {
+        dmg = Math.max(1, Math.round(dmg * BARRICADE_MEDIEVAL_RANGED_MULT));
+      }
+    }
+    if (dmg <= 0) {
+      showGatherMsg('🧱 O tiro foi bloqueado pela barricada!');
+      return;
+    }
+
     const newHp = Math.max(0, (rp.hp || 100) - dmg);
     rp.hp = newHp; // atualização otimista local, evita esperar round-trip pra sentir o golpe
     showGatherMsg(`⚔️ Acertou ${rp.mesh.userData.name || 'inimigo'}! -${dmg} HP`);
@@ -2144,14 +2308,25 @@
       era.tools.forEach((tool) => {
         const key = era.name + ':' + tool.name;
         if (!unlockedRecipes.has(key)) return;
-        const owned = craftedCounts[key] || 0;
-        const slot = itemSlot(tool.name);
-        const equipped = (slot === 'armor' ? equippedArmor : equippedWeapon) === key;
         const costsHtml = Object.entries(tool.costs).map(([k,v]) => {
           const have = inventory[k]||0;
           const ok = have >= v;
           return `<span class="${ok?'costOk':'costBad'}">${RESOURCE_ICONS[k]} ${have}/${v}</span>`;
         }).join(' ');
+        if (tool.structure) {
+          // barricada: não é item pra equipar, é estrutura fixa — só um nível construído por jogador
+          const built = builtBarricadeTier === tool.structure;
+          const disabled = built || (builtBarricadeTier && builtBarricadeTier !== tool.structure) || !canAffordCosts(tool.costs);
+          craftItemsHtml += `<div class="craftRow">
+            <div>🧱 ${tool.name}${built ? ' <span style="opacity:.6">(construída)</span>' : ''}</div>
+            <div class="costs">${costsHtml}</div>
+            <div><button ${disabled ? 'disabled' : ''} onclick="window.__vulcanisBuildStructure('${tool.structure}')">${built ? 'Construída' : 'Construir'}</button></div>
+          </div>`;
+          return;
+        }
+        const owned = craftedCounts[key] || 0;
+        const slot = itemSlot(tool.name);
+        const equipped = (slot === 'armor' ? equippedArmor : equippedWeapon) === key;
         const statTxt = tool.dmg ? `dano ${tool.dmg}` : (tool.def ? `defesa ${tool.def}` : '');
         craftItemsHtml += `<div class="craftRow">
           <div>${itemIcon(tool.name)} ${tool.name}${statTxt ? ` <span style="opacity:.6">[${statTxt}]</span>` : ''}${owned ? ` <span style="opacity:.6">(x${owned})</span>` : ''}</div>
@@ -2676,6 +2851,13 @@
         upsertPlayerSession(currentRegionIndex, currentTribeIndex, player.position.x, player.position.z);
         fetchOtherPlayersInRegion(currentRegionIndex);
       });
+    }
+
+    // estruturas (fazenda/armazém/barricada) são fixas — não precisa reconsultar no ritmo do heartbeat de posição
+    structureFetchTimer += dt;
+    if (structureFetchTimer >= STRUCTURE_FETCH_INTERVAL) {
+      structureFetchTimer = 0;
+      fetchRegionStructures(currentRegionIndex);
     }
 
     // câmera travada no personagem — sem lerp, sem lag, sem guinada. só a distância muda com o scroll.
