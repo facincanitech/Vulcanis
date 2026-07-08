@@ -265,65 +265,66 @@
   const RESOURCE_LABELS = { graveto:'Graveto', lasca:'Lasca de Pedra', corda:'Corda de Arbusto', madeira:'Madeira', minerio:'Minério' };
 
   // eras de evolução: da Idade da Pedra até a Era Moderna atual.
-  // pra abrir a próxima era, precisa ter craftado TODOS os itens da era atual.
-  // cada item custa recursos de verdade do inventário (nada de "XP genérico").
+  // pra abrir a próxima era, precisa ter desbloqueado (na Skilltree) TODOS os itens da era atual.
+  // desbloquear a receita (Skilltree/T) custa XP. craftar o item de verdade (Inventário/I) custa recursos.
   // itens condizem com a tecnologia da época (nada de arco na era industrial etc).
   const ERAS = [
     { name:'Idade da Pedra', tools:[
-      { name:'Porrete de Pedra', costs:{ graveto:3 } },
-      { name:'Faca de Pedra',    costs:{ graveto:1, lasca:2 } },
-      { name:'Machado de Pedra', costs:{ graveto:2, lasca:3, corda:1 } },
-      { name:'Lança de Madeira', costs:{ graveto:3, corda:1 } },
-      { name:'Arco e Flecha',    costs:{ graveto:2, corda:2 } },
+      { name:'Porrete de Pedra', xpCost:15, costs:{ graveto:3 } },
+      { name:'Faca de Pedra',    xpCost:15, costs:{ graveto:1, lasca:2 } },
+      { name:'Machado de Pedra', xpCost:25, costs:{ graveto:2, lasca:3, corda:1 } },
+      { name:'Lança de Madeira', xpCost:20, costs:{ graveto:3, corda:1 } },
+      { name:'Arco e Flecha',    xpCost:25, costs:{ graveto:2, corda:2 } },
     ]},
     { name:'Idade do Bronze', tools:[
-      { name:'Machado de Bronze', costs:{ madeira:2, minerio:3 } },
-      { name:'Espada de Bronze',  costs:{ madeira:1, minerio:4 } },
-      { name:'Escudo de Bronze',  costs:{ madeira:2, minerio:2 } },
-      { name:'Armadura de Bronze',costs:{ madeira:1, minerio:5 } },
+      { name:'Machado de Bronze', xpCost:45, costs:{ madeira:2, minerio:3 } },
+      { name:'Espada de Bronze',  xpCost:50, costs:{ madeira:1, minerio:4 } },
+      { name:'Escudo de Bronze',  xpCost:40, costs:{ madeira:2, minerio:2 } },
+      { name:'Armadura de Bronze',xpCost:55, costs:{ madeira:1, minerio:5 } },
     ]},
     { name:'Idade do Ferro', tools:[
-      { name:'Picareta de Ferro', costs:{ madeira:3, lasca:2 } },
-      { name:'Espada de Ferro',   costs:{ madeira:1, minerio:4 } },
-      { name:'Machado de Ferro',  costs:{ madeira:2, minerio:3 } },
-      { name:'Armadura de Ferro', costs:{ madeira:1, minerio:5 } },
+      { name:'Picareta de Ferro', xpCost:65, costs:{ madeira:3, lasca:2 } },
+      { name:'Espada de Ferro',   xpCost:75, costs:{ madeira:1, minerio:4 } },
+      { name:'Machado de Ferro',  xpCost:70, costs:{ madeira:2, minerio:3 } },
+      { name:'Armadura de Ferro', xpCost:80, costs:{ madeira:1, minerio:5 } },
     ]},
     { name:'Idade Medieval', tools:[
-      { name:'Besta',              costs:{ madeira:3, minerio:2, corda:2 } },
-      { name:'Espada Longa',       costs:{ madeira:1, minerio:5 } },
-      { name:'Armadura de Placas', costs:{ madeira:1, minerio:6 } },
-      { name:'Alabarda',           costs:{ madeira:2, minerio:4 } },
+      { name:'Besta',              xpCost:95,  costs:{ madeira:3, minerio:2, corda:2 } },
+      { name:'Espada Longa',       xpCost:100, costs:{ madeira:1, minerio:5 } },
+      { name:'Armadura de Placas', xpCost:120, costs:{ madeira:1, minerio:6 } },
+      { name:'Alabarda',           xpCost:105, costs:{ madeira:2, minerio:4 } },
     ]},
     { name:'Idade Industrial', tools:[
-      { name:'Rifle',            costs:{ madeira:2, minerio:6 } },
-      { name:'Canhão Portátil',  costs:{ madeira:3, minerio:9 } },
-      { name:'Dinamite',         costs:{ minerio:4, corda:1 } },
-      { name:'Armadura de Aço',  costs:{ minerio:8 } },
+      { name:'Rifle',            xpCost:150, costs:{ madeira:2, minerio:6 } },
+      { name:'Canhão Portátil',  xpCost:180, costs:{ madeira:3, minerio:9 } },
+      { name:'Dinamite',         xpCost:140, costs:{ minerio:4, corda:1 } },
+      { name:'Armadura de Aço',  xpCost:170, costs:{ minerio:8 } },
     ]},
     { name:'Era Moderna', tools:[
-      { name:'Fuzil Automático',       costs:{ minerio:7, madeira:1 } },
-      { name:'Colete Balístico',       costs:{ minerio:5, corda:2 } },
-      { name:'Granada',                costs:{ minerio:3 } },
-      { name:'Drone de Reconhecimento',costs:{ minerio:9, madeira:1 } },
+      { name:'Fuzil Automático',       xpCost:220, costs:{ minerio:7, madeira:1 } },
+      { name:'Colete Balístico',       xpCost:200, costs:{ minerio:5, corda:2 } },
+      { name:'Granada',                xpCost:160, costs:{ minerio:3 } },
+      { name:'Drone de Reconhecimento',xpCost:260, costs:{ minerio:9, madeira:1 } },
     ]},
   ];
 
   // tipos de recurso coletável no mapa
   // graveto/lasca/corda: pega na hora, sem ferramenta. árvore/minério: precisa segurar o clique (golpes) e ferramenta específica.
+  // cada um também dá XP (usado só pra desbloquear receitas na Skilltree).
   const RESOURCE_TYPES = [
-    { type:'graveto', label:'Graveto', key:'graveto', amount:2, instant:true,
+    { type:'graveto', label:'Graveto', key:'graveto', amount:2, xp:1, instant:true,
       build: () => {
         const m = new THREE.Mesh(new THREE.CylinderGeometry(0.35,0.45,7,6), new THREE.MeshStandardMaterial({ color:0x6b4a2f }));
         m.rotation.z = Math.PI/2.4; m.rotation.y = Math.random()*Math.PI;
         return m;
       }, yOff:0.6 },
-    { type:'lasca', label:'Lasca de Pedra', key:'lasca', amount:2, instant:true,
+    { type:'lasca', label:'Lasca de Pedra', key:'lasca', amount:2, xp:1, instant:true,
       build: () => new THREE.Mesh(new THREE.TetrahedronGeometry(1.8,0), new THREE.MeshStandardMaterial({ color:0x8a8a8a })), yOff:0.5 },
-    { type:'arbusto', label:'Corda de Arbusto', key:'corda', amount:2, instant:true,
+    { type:'arbusto', label:'Corda de Arbusto', key:'corda', amount:2, xp:1, instant:true,
       build: () => new THREE.Mesh(new THREE.IcosahedronGeometry(2.2,0), new THREE.MeshStandardMaterial({ color:0x3a7d3f })), yOff:1.6 },
-    { type:'arvore',  label:'Árvore',  key:'madeira', amount:4, instant:false, gatherTime:1.6, tool:'Machado',
+    { type:'arvore',  label:'Árvore',  key:'madeira', amount:4, xp:4, instant:false, gatherTime:1.6, tool:'Machado',
       build: () => new THREE.Mesh(new THREE.ConeGeometry(4,12,8), new THREE.MeshStandardMaterial({ color:0x2f6b34 })) , yOff:6 },
-    { type:'minerio', label:'Jazida de Minério', key:'minerio', amount:5, instant:false, gatherTime:2.2, tool:'Picareta',
+    { type:'minerio', label:'Jazida de Minério', key:'minerio', amount:5, xp:6, instant:false, gatherTime:2.2, tool:'Picareta',
       build: () => new THREE.Mesh(new THREE.IcosahedronGeometry(3,0), new THREE.MeshStandardMaterial({ color:0x5f8fae, metalness:0.4, roughness:0.5 })), yOff:3 },
   ];
 
@@ -535,7 +536,7 @@
       mesh.position.set(x, def.yOff, z);
       gscene.add(mesh);
       mesh.userData.baseScale = mesh.scale.clone();
-      nodes.push({ mesh, type: def.type, label: def.label, key: def.key, amount: def.amount, instant: !!def.instant, gatherTime: def.gatherTime || 0, tool: def.tool || null });
+      nodes.push({ mesh, type: def.type, label: def.label, key: def.key, amount: def.amount, xp: def.xp || 0, instant: !!def.instant, gatherTime: def.gatherTime || 0, tool: def.tool || null });
     }
 
     return { scene: gscene, player: playerGroup, volcano, resourceNodes: nodes };
@@ -556,6 +557,7 @@
   let currentRegion = null;
   let currentTribeIndex = 0;
   let inventory = { graveto:0, lasca:0, corda:0, madeira:0, minerio:0 };
+  let playerXp = 0;                // XP gasto pra desbloquear receitas na Skilltree (T)
   let unlockedRecipes = new Set(); // chaves "EraName:ToolName" — desbloqueadas na Skilltree (T)
   let craftedCounts = {};          // chaves "EraName:ToolName" -> quantidade craftada no Inventário (I)
   let activeEraTab = 0;            // aba de era selecionada na Skilltree
@@ -668,6 +670,7 @@
       currentRegion = region;
       currentTribeIndex = tribeIndex;
       inventory = { graveto:0, lasca:0, corda:0, madeira:0, minerio:0 };
+      playerXp = 0;
       unlockedRecipes = new Set();
       craftedCounts = {};
       activeEraTab = 0;
@@ -735,6 +738,7 @@
     const invHtml = RESOURCE_KEYS.map(k => `${RESOURCE_LABELS[k]}: ${inventory[k]}`).join(' &nbsp;|&nbsp; ');
     gameHudEl.innerHTML = `
       <b>Tribo ${tribeName}</b> — ${currentRegion ? currentRegion.name : ''}<br>
+      XP: ${playerXp}<br>
       ${invHtml}<br>
       <button onclick="window.__vulcanisOpenSkill()">Skilltree [T]</button>
       <button onclick="window.__vulcanisOpenInv()">Inventário [I]</button>
@@ -743,7 +747,7 @@
     if (openScreen === 'inv') updateInvScreen();
   }
 
-  // ---------- SKILLTREE (T): desbloqueia receitas, quadrado por quadrado ----------
+  // ---------- SKILLTREE (T): gasta XP pra desbloquear receitas, quadrado por quadrado ----------
   function updateSkillScreen(){
     let tabsHtml = '<div class="eraTabs">';
     ERAS.forEach((era, i) => {
@@ -767,19 +771,26 @@
       era.tools.forEach((tool, tIdx) => {
         const key = era.name + ':' + tool.name;
         const known = unlockedRecipes.has(key);
-        gridHtml += `<div class="skillSquare ${known ? 'unlocked' : ''}" onclick="window.__vulcanisUnlockRecipe(${activeEraTab},${tIdx})">${known ? '&#10003;' : '&#128274;'}<br>${tool.name}</div>`;
+        const canAfford = playerXp >= tool.xpCost;
+        const cls = ['skillSquare'];
+        if (known) cls.push('unlocked');
+        else if (!canAfford) cls.push('disabled');
+        gridHtml += `<div class="${cls.join(' ')}" onclick="window.__vulcanisUnlockRecipe(${activeEraTab},${tIdx})">${known ? '&#10003;' : '&#128274; ' + tool.xpCost + ' XP'}<br>${tool.name}</div>`;
       });
       gridHtml += '</div>';
     }
 
-    skillBodyEl.innerHTML = `${tabsHtml}${gridHtml}`;
+    skillBodyEl.innerHTML = `${tabsHtml}<div>XP disponível: ${playerXp}</div>${gridHtml}`;
   }
 
   window.__vulcanisUnlockRecipe = function(eraIdx, toolIdx){
     if (!isEraUnlocked(eraIdx)) return;
     const era = ERAS[eraIdx];
-    const key = era.name + ':' + era.tools[toolIdx].name;
+    const tool = era.tools[toolIdx];
+    const key = era.name + ':' + tool.name;
     if (unlockedRecipes.has(key)) return;
+    if (playerXp < tool.xpCost) return;
+    playerXp -= tool.xpCost;
     unlockedRecipes.add(key);
     updateSkillScreen();
     updateGameHud();
@@ -880,7 +891,8 @@
     gameplayScene.remove(node.mesh);
     resourceNodes.splice(idx, 1);
     inventory[node.key] = (inventory[node.key]||0) + node.amount;
-    showGatherMsg(`+${node.amount} ${node.label}`);
+    playerXp += node.xp;
+    showGatherMsg(`+${node.amount} ${node.label}  |  +${node.xp} XP`);
     updateGameHud();
   }
 
