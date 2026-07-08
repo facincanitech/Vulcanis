@@ -259,7 +259,7 @@
 </head>
 <body>
 
-<div id="versionTag">VulcaniS — protótipo v0.23</div>
+<div id="versionTag">VulcaniS — protótipo v0.24</div>
 <div id="welcomeScreen">
   <h1>Bem-vindo a Vulcanis</h1>
   <div class="hint">Um mundo de tribos, evolução e um vulcão que nunca é 100% previsível.</div>
@@ -317,8 +317,8 @@
   </div>
 </div>
 <div id="plantMenu" class="screenOverlay">
-  <div class="screenPanel" style="width:300px;text-align:center;">
-    <h2>O que plantar?</h2>
+  <div class="screenPanel" style="width:340px;text-align:center;">
+    <h2 id="plantMenuTitle">Fazenda</h2>
     <div id="plantMenuBody" class="skillGrid"></div>
     <button class="screenCloseBtn" onclick="window.__vulcanisClosePlantMenu()">Cancelar</button>
   </div>
@@ -551,25 +551,48 @@
   // ---------- SUBSKILL FAZENDEIRO ----------
   // ramo opcional e paralelo às eras: fica disponível assim que a Idade da Pedra é completada.
   // não trava nem depende do avanço normal de era. desbloqueios em cadeia (cada um exige o anterior).
+  // fazendeiro e armazém são desbloqueios "de suporte" (liberam construir a estrutura no mapa via craft
+  // no inventário); as culturas formam uma cadeia sequencial própria, independente do armazém
   const FARMER_ITEMS = [
     { key:'fazendeiro', label:'Fazendeiro', icon:'🌾', xpCost:40 },
-    { key:'cenoura',    label:'Cenoura',     icon:'🥕', xpCost:30, growTime:20 },
-    { key:'batata',     label:'Batata',      icon:'🥔', xpCost:45, growTime:25 },
-    { key:'maca',       label:'Maçã',        icon:'🍎', xpCost:60, growTime:30 },
-    { key:'tomate',     label:'Tomate',      icon:'🍅', xpCost:75, growTime:22 },
+    { key:'armazem',    label:'Armazém',    icon:'📦', xpCost:35 },
+    { key:'cenoura',    label:'Cenoura',     icon:'🥕', xpCost:30, growTime:18, hungerValue:16 },
+    { key:'batata',     label:'Batata',      icon:'🥔', xpCost:55, growTime:34, hungerValue:38 },
+    { key:'maca',       label:'Maçã',        icon:'🍎', xpCost:65, growTime:26, hungerValue:24 },
+    { key:'tomate',     label:'Tomate',      icon:'🍅', xpCost:75, growTime:24, hungerValue:22 },
   ];
   const FOOD_CARRY_MAX = 10;
   const MAX_FARMS_PER_TRIBE = 4;
   const FARM_SIZE = 40;      // "4x4"
+  const FARM_PLOTS_PER_FARM = 4;
   const WAREHOUSE_SIZE = 20; // "2x2"
   const INTERACT_RANGE = 30;
+  const FARM_BUILD_COST = { madeira:20, lasca:10 };
+  const WAREHOUSE_BUILD_COST = { madeira:30, lasca:15, corda:10 };
 
   function isFarmerTabUnlocked(){ return eraCompleted(0); } // liberado depois da Idade da Pedra
   function farmerItemUnlocked(idx){ return unlockedFarmerItems.has(FARMER_ITEMS[idx].key); }
+  // pré-requisito de cada item (sem checar XP) — fazendeiro é a raiz; armazém só depende do fazendeiro;
+  // culturas formam sua própria cadeia sequencial, ignorando o armazém
+  function farmerItemAvailable(idx){
+    const item = FARMER_ITEMS[idx];
+    if (item.key === 'fazendeiro') return true;
+    if (item.key === 'armazem') return unlockedFarmerItems.has('fazendeiro');
+    const crops = FARMER_ITEMS.filter(i => i.key !== 'fazendeiro' && i.key !== 'armazem');
+    const cropIdx = crops.findIndex(c => c.key === item.key);
+    if (cropIdx === 0) return unlockedFarmerItems.has('fazendeiro');
+    return unlockedFarmerItems.has(crops[cropIdx-1].key);
+  }
   function canUnlockFarmerItem(idx){
     if (!isFarmerTabUnlocked() || farmerItemUnlocked(idx)) return false;
-    if (idx > 0 && !farmerItemUnlocked(idx-1)) return false; // cadeia sequencial
+    if (!farmerItemAvailable(idx)) return false;
     return playerXp >= FARMER_ITEMS[idx].xpCost;
+  }
+  function canAffordCosts(costs){
+    return Object.entries(costs).every(([k,v]) => (inventory[k]||0) >= v);
+  }
+  function spendCosts(costs){
+    Object.entries(costs).forEach(([k,v]) => { inventory[k] -= v; });
   }
 
   // tipos de recurso coletável no mapa
@@ -1060,6 +1083,23 @@
       new THREE.LineBasicMaterial({ color:0xd9c08a, transparent:true, opacity:0.6 })
     );
     group.add(border);
+
+    // 4 canteiros dentro da fazenda, em grade 2x2 — cada um planta/cresce/colhe independente
+    const slotOffsets = [[-10,-10], [10,-10], [-10,10], [10,10]];
+    group.userData.slotGroups = slotOffsets.map(([ox, oz]) => {
+      const slotGroup = new THREE.Group();
+      slotGroup.position.set(ox, 0, oz);
+      const marker = new THREE.Mesh(
+        new THREE.PlaneGeometry(14, 14),
+        new THREE.MeshStandardMaterial({ color:0x5a4028, roughness:1 })
+      );
+      marker.rotation.x = -Math.PI/2;
+      marker.position.y = 0.15;
+      slotGroup.add(marker);
+      group.add(slotGroup);
+      return slotGroup;
+    });
+
     group.position.set(x, 0, z);
     return group;
   }
@@ -1083,76 +1123,99 @@
     return group;
   }
 
-  // ícone/cor pelo estado atual da plantação
-  function updateFarmVisual(fp){
-    if (fp.cropMesh) { fp.mesh.remove(fp.cropMesh); fp.cropMesh = null; }
-    if (fp.state === 'empty') return;
+  // visual de um canteiro pelo seu estado: vazio (só terra), semeado (pontinhos escuros = semente + água),
+  // crescendo (broto verde), pronto (fruto colorido)
+  function updateFarmSlotVisual(fp, idx){
+    const slot = fp.plots[idx];
+    const slotGroup = fp.mesh.userData.slotGroups[idx];
+    if (slot.cropMesh) { slotGroup.remove(slot.cropMesh); slot.cropMesh = null; }
+    if (slot.state === 'empty') return;
+    if (slot.state === 'planted') {
+      const dots = new THREE.Group();
+      for (let i = 0; i < 5; i++) {
+        const dot = new THREE.Mesh(new THREE.SphereGeometry(0.5, 6, 6), new THREE.MeshStandardMaterial({ color:0x2a1a0f }));
+        dot.position.set((Math.random()-0.5)*8, 0.3, (Math.random()-0.5)*8);
+        dots.add(dot);
+      }
+      slotGroup.add(dots);
+      slot.cropMesh = dots;
+      return;
+    }
+    if (slot.state === 'growing') {
+      const sprout = new THREE.Mesh(new THREE.ConeGeometry(1.2, 2.5, 6), new THREE.MeshStandardMaterial({ color:0x4a9a4a }));
+      sprout.position.y = 1.2;
+      slotGroup.add(sprout);
+      slot.cropMesh = sprout;
+      return;
+    }
+    // ready
     const colors = { cenoura:0xdd7a22, batata:0xc9a86a, maca:0xcc3333, tomate:0xdd4422 };
-    const color = colors[fp.crop] || 0x5fae5f;
-    const scale = fp.state === 'ready' ? 1 : 0.5;
-    const mesh = new THREE.Mesh(
-      new THREE.SphereGeometry(3.5*scale, 12, 12),
-      new THREE.MeshStandardMaterial({ color, roughness:0.7 })
+    const fruit = new THREE.Mesh(
+      new THREE.SphereGeometry(3, 12, 12),
+      new THREE.MeshStandardMaterial({ color: colors[slot.crop] || 0x5fae5f, roughness:0.7 })
     );
-    mesh.position.y = 2*scale;
-    fp.mesh.add(mesh);
-    fp.cropMesh = mesh;
+    fruit.position.y = 2;
+    slotGroup.add(fruit);
+    slot.cropMesh = fruit;
   }
 
-  // chamado quando o jogador desbloqueia "Fazendeiro" — nasce a fazenda pessoal + armazém da tribo perto do spawn
-  function spawnFarmAndWarehouse(){
-    if (!gameplayScene || !originDir) return;
+  // constrói a fazenda pessoal perto do spawn da tribo — chamado só ao craftar "Fazenda" no inventário
+  function placeFarmPlot(){
+    if (!gameplayScene || !originDir || farmPlot) return;
     const perp = new THREE.Vector3(-originDir.z, 0, originDir.x);
     const base = new THREE.Vector3(originX, 0, originZ).add(originDir.clone().multiplyScalar(70));
-
-    if (!farmPlot) {
-      const slot = 0; // vaga do jogador atual (prototype single-player); até MAX_FARMS_PER_TRIBE no futuro multiplayer
-      const offset = perp.clone().multiplyScalar((slot - 1.5) * (FARM_SIZE + 10));
-      const pos = base.clone().add(offset);
-      const mesh = buildFarmPlot(pos.x, pos.z);
-      gameplayScene.add(mesh);
-      farmPlot = { mesh, cropMesh:null, state:'empty', crop:null, growElapsed:0 };
-      interactables.push({ mesh, type:'farm' });
-    }
-    if (!warehouse) {
-      const pos = base.clone().add(perp.clone().multiplyScalar(-3*(FARM_SIZE+10)));
-      const mesh = buildWarehouse(pos.x, pos.z);
-      gameplayScene.add(mesh);
-      warehouse = { mesh };
-      interactables.push({ mesh, type:'warehouse' });
-    }
+    const slot = 0; // vaga do jogador atual (prototype single-player); até MAX_FARMS_PER_TRIBE no futuro multiplayer
+    const offset = perp.clone().multiplyScalar((slot - 1.5) * (FARM_SIZE + 10));
+    const pos = base.clone().add(offset);
+    const mesh = buildFarmPlot(pos.x, pos.z);
+    gameplayScene.add(mesh);
+    farmPlot = {
+      mesh,
+      plots: Array.from({ length: FARM_PLOTS_PER_FARM }, () => ({ state:'empty', crop:null, growElapsed:0, cropMesh:null })),
+    };
+    interactables.push({ mesh, type:'farm' });
   }
+
+  // constrói o armazém da tribo perto do spawn — chamado só ao craftar "Armazém" no inventário
+  function placeWarehouse(){
+    if (!gameplayScene || !originDir || warehouse) return;
+    const perp = new THREE.Vector3(-originDir.z, 0, originDir.x);
+    const base = new THREE.Vector3(originX, 0, originZ).add(originDir.clone().multiplyScalar(70));
+    const pos = base.clone().add(perp.clone().multiplyScalar(-3*(FARM_SIZE+10)));
+    const mesh = buildWarehouse(pos.x, pos.z);
+    gameplayScene.add(mesh);
+    warehouse = { mesh };
+    interactables.push({ mesh, type:'warehouse' });
+  }
+
+  window.__vulcanisBuildFarm = function(){
+    if (!unlockedFarmerItems.has('fazendeiro') || farmPlot || !canAffordCosts(FARM_BUILD_COST)) return;
+    spendCosts(FARM_BUILD_COST);
+    placeFarmPlot();
+    updateGameHud();
+    updateInvScreen();
+    showGatherMsg('Fazenda construída 🌾');
+  };
+  window.__vulcanisBuildWarehouse = function(){
+    if (!unlockedFarmerItems.has('armazem') || warehouse || !canAffordCosts(WAREHOUSE_BUILD_COST)) return;
+    spendCosts(WAREHOUSE_BUILD_COST);
+    placeWarehouse();
+    updateGameHud();
+    updateInvScreen();
+    showGatherMsg('Armazém construído 📦');
+  };
 
   function foodTotal(inv){
     return Object.values(inv).reduce((a,b) => a+b, 0);
   }
 
   function handleFarmInteract(){
+    if (!farmPlot) return;
     if (player.position.distanceTo(farmPlot.mesh.position) > INTERACT_RANGE) {
       showGatherMsg('Chegue mais perto da fazenda');
       return;
     }
-    if (farmPlot.state === 'empty') {
-      openPlantMenu();
-    } else if (farmPlot.state === 'planted') {
-      farmPlot.state = 'growing';
-      showGatherMsg('Você regou a plantação 💧');
-    } else if (farmPlot.state === 'growing') {
-      showGatherMsg('Ainda tá crescendo...');
-    } else if (farmPlot.state === 'ready') {
-      if (foodTotal(foodInventory) >= FOOD_CARRY_MAX) {
-        showGatherMsg(`Mochila de comida cheia (máx ${FOOD_CARRY_MAX})`);
-        return;
-      }
-      const item = FARMER_ITEMS.find(i => i.key === farmPlot.crop);
-      foodInventory[farmPlot.crop] = (foodInventory[farmPlot.crop]||0) + 1;
-      showGatherMsg(`Colheu ${item.icon} ${item.label}`);
-      farmPlot.state = 'empty';
-      farmPlot.crop = null;
-      farmPlot.growElapsed = 0;
-      updateFarmVisual(farmPlot);
-      updateGameHud();
-    }
+    openFarmMenu();
   }
 
   function handleWarehouseInteract(){
@@ -1305,30 +1368,94 @@
     updateGameHud();
   };
 
-  function openPlantMenu(){
-    const plantable = FARMER_ITEMS.filter(i => i.key !== 'fazendeiro' && unlockedFarmerItems.has(i.key));
-    if (!plantable.length) {
-      showGatherMsg('Nenhuma cultura desbloqueada ainda — vá na Skilltree [N]');
-      return;
-    }
-    plantMenuBodyEl.innerHTML = plantable.map(i =>
-      `<div class="skillSquare" onclick="window.__vulcanisPlantCrop('${i.key}')">${i.icon}<br>${i.label}</div>`
-    ).join('');
+  // tela de gerenciar a fazenda: mostra os 4 canteiros e a ação disponível pra cada um (plantar/regar/colher).
+  // null = visão geral dos 4 canteiros; um índice = escolhendo cultura pra plantar naquele canteiro específico
+  let plantMenuTargetSlot = null;
+
+  function farmCropList(){
+    return FARMER_ITEMS.filter(i => i.key !== 'fazendeiro' && i.key !== 'armazem' && unlockedFarmerItems.has(i.key));
+  }
+
+  function openFarmMenu(){
+    if (!farmPlot) return;
+    plantMenuTargetSlot = null;
+    renderFarmMenu();
     plantMenuOpen = true;
     plantMenuEl.classList.add('on');
   }
+
+  function renderFarmMenu(){
+    if (plantMenuTargetSlot !== null) {
+      plantMenuTitleEl.textContent = 'O que plantar?';
+      const plantable = farmCropList();
+      plantMenuBodyEl.innerHTML = plantable.length
+        ? plantable.map(i => `<div class="skillSquare" onclick="window.__vulcanisPlantCrop(${plantMenuTargetSlot},'${i.key}')">${i.icon}<br>${i.label}</div>`).join('')
+        : `<div class="era-locked">Nenhuma cultura desbloqueada ainda — vá na Skilltree [N]</div>`;
+      return;
+    }
+    plantMenuTitleEl.textContent = 'Fazenda';
+    plantMenuBodyEl.innerHTML = farmPlot.plots.map((slot, idx) => {
+      const item = slot.crop ? FARMER_ITEMS.find(i => i.key === slot.crop) : null;
+      let icon = '🟫', label = 'Vazio', action = `<button onclick="window.__vulcanisFarmSlotPlant(${idx})">Plantar</button>`;
+      if (slot.state === 'planted') {
+        icon = item.icon; label = `${item.label} (semeado)`;
+        action = `<button onclick="window.__vulcanisFarmSlotWater(${idx})">Regar 💧</button>`;
+      } else if (slot.state === 'growing') {
+        const pct = Math.min(99, Math.round((slot.growElapsed / item.growTime) * 100));
+        icon = item.icon; label = `${item.label} — crescendo ${pct}%`;
+        action = `<span style="opacity:.6">Aguarde...</span>`;
+      } else if (slot.state === 'ready') {
+        icon = item.icon; label = `${item.label} pronto!`;
+        action = `<button onclick="window.__vulcanisFarmSlotHarvest(${idx})">Colher</button>`;
+      }
+      return `<div class="skillSquare" style="cursor:default">${icon}<br>${label}<br>${action}</div>`;
+    }).join('');
+  }
+
   window.__vulcanisClosePlantMenu = function(){
+    if (plantMenuTargetSlot !== null) { plantMenuTargetSlot = null; renderFarmMenu(); return; }
     plantMenuOpen = false;
     plantMenuEl.classList.remove('on');
   };
-  window.__vulcanisPlantCrop = function(cropKey){
-    if (!farmPlot || farmPlot.state !== 'empty') { window.__vulcanisClosePlantMenu(); return; }
-    farmPlot.crop = cropKey;
-    farmPlot.state = 'planted';
-    farmPlot.growElapsed = 0;
-    updateFarmVisual(farmPlot);
-    window.__vulcanisClosePlantMenu();
-    showGatherMsg('Plantado — clique de novo pra regar 💧');
+  window.__vulcanisFarmSlotPlant = function(slotIdx){
+    plantMenuTargetSlot = slotIdx;
+    renderFarmMenu();
+  };
+  window.__vulcanisPlantCrop = function(slotIdx, cropKey){
+    const slot = farmPlot && farmPlot.plots[slotIdx];
+    if (!slot || slot.state !== 'empty') { plantMenuTargetSlot = null; renderFarmMenu(); return; }
+    slot.crop = cropKey;
+    slot.state = 'planted';
+    slot.growElapsed = 0;
+    updateFarmSlotVisual(farmPlot, slotIdx);
+    plantMenuTargetSlot = null;
+    renderFarmMenu();
+    showGatherMsg('Plantado — regue pra começar a crescer 💧');
+  };
+  window.__vulcanisFarmSlotWater = function(slotIdx){
+    const slot = farmPlot && farmPlot.plots[slotIdx];
+    if (!slot || slot.state !== 'planted') return;
+    slot.state = 'growing';
+    updateFarmSlotVisual(farmPlot, slotIdx);
+    renderFarmMenu();
+    showGatherMsg('Você regou a plantação 💧');
+  };
+  window.__vulcanisFarmSlotHarvest = function(slotIdx){
+    const slot = farmPlot && farmPlot.plots[slotIdx];
+    if (!slot || slot.state !== 'ready') return;
+    if (foodTotal(foodInventory) >= FOOD_CARRY_MAX) {
+      showGatherMsg(`Mochila de comida cheia (máx ${FOOD_CARRY_MAX})`);
+      return;
+    }
+    const item = FARMER_ITEMS.find(i => i.key === slot.crop);
+    foodInventory[slot.crop] = (foodInventory[slot.crop]||0) + 1;
+    showGatherMsg(`Colheu ${item.icon} ${item.label}`);
+    slot.state = 'empty';
+    slot.crop = null;
+    slot.growElapsed = 0;
+    updateFarmSlotVisual(farmPlot, slotIdx);
+    renderFarmMenu();
+    updateGameHud();
   };
 
   // ---------- MULTIPLAYER: outros jogadores visíveis, via poll na tabela (com lag, mas estável) ----------
@@ -1447,7 +1574,7 @@
 
   // fazenda / armazém
   let unlockedFarmerItems = new Set(); // chaves de FARMER_ITEMS
-  let farmPlot = null;                 // { mesh, cropMesh, state, crop, growElapsed }
+  let farmPlot = null;                 // { mesh, plots: [{state,crop,growElapsed,cropMesh}] x4 } — só existe depois de craftada
   let warehouse = null;                // { mesh }
   let warehouseStock = {};             // por cultura
   let foodInventory = {};              // por cultura, carregado pelo jogador (máx FOOD_CARRY_MAX no total)
@@ -1521,6 +1648,7 @@
   const joystickKnobEl = document.getElementById('joystickKnob');
   const plantMenuEl = document.getElementById('plantMenu');
   const plantMenuBodyEl = document.getElementById('plantMenuBody');
+  const plantMenuTitleEl = document.getElementById('plantMenuTitle');
   const minimapEl = document.getElementById('minimap');
   const mmPlayerEl = document.getElementById('mmPlayer');
 
@@ -1700,6 +1828,7 @@
       foodInventory = {};
       interactables = [{ mesh: gameplayVolcano, type:'volcano' }];
       plantMenuOpen = false;
+      plantMenuTargetSlot = null;
       hudRefreshTimer = 0;
       activeEraTab = 0;
       openScreen = null;
@@ -1933,7 +2062,7 @@
         gridHtml = '<div class="skillGrid">';
         FARMER_ITEMS.forEach((item, idx) => {
           const known = farmerItemUnlocked(idx);
-          const available = idx === 0 || farmerItemUnlocked(idx-1);
+          const available = farmerItemAvailable(idx);
           const canAfford = playerXp >= item.xpCost;
           const cls = ['skillSquare'];
           if (known) cls.push('unlocked');
@@ -1983,7 +2112,6 @@
     const item = FARMER_ITEMS[idx];
     playerXp -= item.xpCost;
     unlockedFarmerItems.add(item.key);
-    if (item.key === 'fazendeiro') spawnFarmAndWarehouse();
     updateSkillScreen();
     updateGameHud();
   };
@@ -2045,7 +2173,30 @@
       craftItemsHtml = `<div class="era-locked">Nenhuma receita desbloqueada ainda — abra a Skilltree [N].</div>`;
     }
 
-    const foodEntries = FARMER_ITEMS.filter(i => i.key !== 'fazendeiro' && foodInventory[i.key] > 0);
+    // construir fazenda/armazém — aparece só depois de desbloqueado no ramo Fazendeiro da Skilltree;
+    // cada um só pode ser construído uma vez (por jogador) e some da lista depois de pronto
+    let farmBuildHtml = '';
+    if (isFarmerTabUnlocked()) {
+      const buildRow = (icon, label, unlockedKey, built, costs, fnName) => {
+        const costsHtml = Object.entries(costs).map(([k,v]) => {
+          const have = inventory[k]||0;
+          const ok = have >= v;
+          return `<span class="${ok?'costOk':'costBad'}">${RESOURCE_ICONS[k]} ${have}/${v}</span>`;
+        }).join(' ');
+        const known = unlockedFarmerItems.has(unlockedKey);
+        const disabled = built || !known || !canAffordCosts(costs);
+        const btnLabel = built ? 'Construída' : (known ? 'Construir' : 'Bloqueado — Skilltree [N]');
+        return `<div class="craftRow">
+          <div>${icon} ${label}${built ? ' <span style="opacity:.6">(construída)</span>' : ''}</div>
+          <div class="costs">${costsHtml}</div>
+          <div><button ${disabled ? 'disabled' : ''} onclick="window.${fnName}()">${btnLabel}</button></div>
+        </div>`;
+      };
+      farmBuildHtml += buildRow('🌾', 'Fazenda', 'fazendeiro', !!farmPlot, FARM_BUILD_COST, '__vulcanisBuildFarm');
+      farmBuildHtml += buildRow('📦', 'Armazém', 'armazem', !!warehouse, WAREHOUSE_BUILD_COST, '__vulcanisBuildWarehouse');
+    }
+
+    const foodEntries = FARMER_ITEMS.filter(i => i.key !== 'fazendeiro' && i.key !== 'armazem' && foodInventory[i.key] > 0);
     const foodHtml = foodEntries.length
       ? foodEntries.map(i => `<div class="resRow"><span>${i.icon} ${i.label}</span><span>${foodInventory[i.key]} <button onclick="window.__vulcanisEatFood('${i.key}')">Comer</button></span></div>`).join('')
       : `<div class="resRow" style="opacity:.6">Nenhuma comida na mochila</div>`;
@@ -2057,16 +2208,22 @@
           <h3 style="margin-top:14px">Equipado</h3>${slotsHtml}
           <h3 style="margin-top:14px">Comida (mochila, máx ${FOOD_CARRY_MAX})</h3>${foodHtml}
         </div>
-        <div class="invCraftCol"><h3>Craft</h3><div class="craftList">${craftItemsHtml}</div></div>
+        <div class="invCraftCol">
+          <h3>Craft</h3>
+          ${farmBuildHtml ? `<div class="craftList" style="margin-bottom:10px">${farmBuildHtml}</div>` : ''}
+          <div class="craftList">${craftItemsHtml}</div>
+        </div>
       </div>
     `;
   }
 
   window.__vulcanisEatFood = function(cropKey){
     if (!(foodInventory[cropKey] > 0)) return;
+    const item = FARMER_ITEMS.find(i => i.key === cropKey);
+    const restore = (item && item.hungerValue) || 25;
     foodInventory[cropKey]--;
-    hunger = Math.min(MAX_HUNGER, hunger + 30);
-    currentHp = Math.min(MAX_HP, currentHp + 8);
+    hunger = Math.min(MAX_HUNGER, hunger + restore);
+    currentHp = Math.min(MAX_HP, currentHp + Math.round(restore * 0.25));
     updateGameHud();
     updateInvScreen();
   };
@@ -2486,14 +2643,20 @@
       }
     }
 
-    // plantação crescendo
-    if (farmPlot && farmPlot.state === 'growing') {
-      farmPlot.growElapsed += dt;
-      const item = FARMER_ITEMS.find(i => i.key === farmPlot.crop);
-      if (item && farmPlot.growElapsed >= item.growTime) {
-        farmPlot.state = 'ready';
-        updateFarmVisual(farmPlot);
-      }
+    // plantações crescendo — cada um dos 4 canteiros cresce de forma independente
+    if (farmPlot) {
+      let farmMenuNeedsRefresh = false;
+      farmPlot.plots.forEach((slot, idx) => {
+        if (slot.state !== 'growing') return;
+        slot.growElapsed += dt;
+        const item = FARMER_ITEMS.find(i => i.key === slot.crop);
+        if (item && slot.growElapsed >= item.growTime) {
+          slot.state = 'ready';
+          updateFarmSlotVisual(farmPlot, idx);
+          farmMenuNeedsRefresh = true;
+        }
+      });
+      if (farmMenuNeedsRefresh && plantMenuOpen && plantMenuTargetSlot === null) renderFarmMenu();
     }
 
     // fome cai com o tempo, mas não causa dano — vida só drena levando dano (combate, futuro).
