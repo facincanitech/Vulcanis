@@ -175,8 +175,16 @@
   }
   #exitGameBtn { bottom:16px; }
   .screenShortcutBtn { font-weight:800; min-width:128px; text-align:left; }
-  #skillShortcutBtn { bottom:108px; }
-  #invShortcutBtn { bottom:62px; }
+  #skillShortcutBtn { bottom:154px; }
+  #invShortcutBtn { bottom:108px; }
+  #electionShortcutBtn { bottom:62px; }
+
+  #roundCountdown {
+    position:fixed; top:14px; left:50%; transform:translateX(-50%); z-index:12; display:none;
+    color:#fff3c5; font-family:var(--mono); font-weight:800; font-size:14px; text-align:center;
+    background:rgba(60,20,10,.78); border:1px solid rgba(255,150,80,.4); padding:8px 16px; border-radius:8px;
+    box-shadow:0 12px 30px rgba(0,0,0,.4);
+  }
 
   #gatherMsg {
     position:fixed; bottom:18px; left:50%; transform:translateX(-50%); z-index:10; pointer-events:none; display:none;
@@ -199,6 +207,12 @@
     border-radius:10px; padding:20px; box-shadow:var(--shadow), inset 0 1px 0 rgba(255,255,255,.08);
   }
   #invPanel { width:min(1100px, 96vw); max-height:92vh; } /* inventário com abas de era — mais largo/alto que o padrão */
+  #electionBody button {
+    font-size:12px; border:1px solid rgba(159,219,206,.25); background:rgba(255,255,255,.06); color:#eaf6ff;
+    padding:7px 12px; border-radius:6px; cursor:pointer;
+  }
+  #electionBody button:not(:disabled):hover { background:rgba(255,138,61,.18); border-color:rgba(255,176,93,.5); }
+  #electionBody button:disabled { opacity:.5; cursor:not-allowed; }
   .screenPanel h2 { margin:0 0 6px; font-size:22px; color:#fff7e8; }
   .screenPanel .hint { opacity:.72; font-size:13px; line-height:1.4; margin-bottom:13px; color:#c3d7d2; }
   .eraTabs { display:flex; flex-wrap:wrap; gap:6px; margin:10px 0 12px; }
@@ -260,7 +274,7 @@
 </head>
 <body>
 
-<div id="versionTag">VulcaniS — protótipo v0.29</div>
+<div id="versionTag">VulcaniS — protótipo v0.30</div>
 <div id="welcomeScreen">
   <h1>Bem-vindo a Vulcanis</h1>
   <div class="hint">Um mundo de tribos, evolução e um vulcão que nunca é 100% previsível.</div>
@@ -297,7 +311,9 @@
 </div>
 <button id="skillShortcutBtn" class="screenShortcutBtn" onclick="window.__vulcanisOpenSkill()">Skilltree</button>
 <button id="invShortcutBtn" class="screenShortcutBtn" onclick="window.__vulcanisOpenInv()">Inventário</button>
+<button id="electionShortcutBtn" class="screenShortcutBtn" onclick="window.__vulcanisOpenElection()">Eleição</button>
 <button id="exitGameBtn">Sair da região (ESC)</button>
+<div id="roundCountdown"></div>
 <div id="gatherMsg"></div>
 <div id="joystickBase"></div>
 <div id="joystickKnob"></div>
@@ -314,6 +330,14 @@
     <h2>Inventário [I]</h2>
     <div class="hint">Craft consome os recursos coletados. Só aparecem aqui as receitas já desbloqueadas na Skilltree.</div>
     <div id="invBody"></div>
+    <button class="screenCloseBtn" onclick="window.__vulcanisCloseScreens()">Fechar (ESC)</button>
+  </div>
+</div>
+<div id="electionScreen" class="screenOverlay">
+  <div id="electionPanel" class="screenPanel" style="width:420px;">
+    <h2>Eleição de líder [V]</h2>
+    <div class="hint">Vote em quem deve ser o líder da tribo. Só o líder pode ligar a contagem final de 30 minutos — e só depois de completar a Idade Medieval.</div>
+    <div id="electionBody"></div>
     <button class="screenCloseBtn" onclick="window.__vulcanisCloseScreens()">Fechar (ESC)</button>
   </div>
 </div>
@@ -1581,7 +1605,7 @@
       if (!rp) {
         const mesh = buildRemotePlayerMesh(row.tribe_index, row.player_name);
         gameplayScene.add(mesh);
-        rp = otherPlayers[row.player_id] = { mesh, tribe: row.tribe_index, hp:100, weapon:null, armor:null };
+        rp = otherPlayers[row.player_id] = { mesh, tribe: row.tribe_index, hp:100, weapon:null, armor:null, voteFor:null };
       }
       if (rp.tribe !== row.tribe_index) {
         setPlayerMeshTribe(rp.mesh, row.tribe_index);
@@ -1616,6 +1640,7 @@
         rp.armor = row.equipped_armor;
       }
       rp.hp = typeof row.hp === 'number' ? row.hp : rp.hp;
+      rp.voteFor = row.vote_for || null;
       const moveDx = row.x - rp.mesh.position.x, moveDz = row.z - rp.mesh.position.z;
       if (Math.hypot(moveDx, moveDz) > 0.5) rp.mesh.rotation.y = Math.atan2(moveDx, moveDz);
       rp.mesh.position.set(row.x, 0, row.z);
@@ -1633,7 +1658,7 @@
     try {
       const cutoff = new Date(Date.now() - 20*1000).toISOString(); // só quem atualizou nos últimos 20s
       const { data, error } = await sb.from('player_sessions')
-        .select('player_id, player_name, tribe_index, x, z, hp, equipped_weapon, equipped_armor')
+        .select('player_id, player_name, tribe_index, x, z, hp, equipped_weapon, equipped_armor, vote_for')
         .eq('region_index', regionIndex)
         .gt('last_seen', cutoff)
         .neq('player_id', myPlayerId);
@@ -1707,6 +1732,14 @@
   let dbHeartbeatTimer = 0;
   const DB_HEARTBEAT_INTERVAL = 4; // segundos — também serve pra mostrar a posição dos outros (com lag)
 
+  // eleição de líder + contagem final: líder é só quem tem mais votos entre os presentes da tribo agora
+  // (recalculado ao vivo, não fica "gravado"); só ele liga a contagem de 30min, e só após a Idade Medieval
+  let myVote = null;          // player_id em quem eu votei
+  let roundEndsAt = null;     // timestamp (ms) de quando a contagem final termina, ou null se não ligada
+  let roundStartedByTribe = null;
+  let roundFetchTimer = 0;
+  const ROUND_FETCH_INTERVAL = 20; // segundos — estado raro de mudar, não precisa do ritmo do heartbeat
+
   // ---------- contagem + posição via banco (player_sessions) — sobrevive a queda de WebSocket ----------
   async function upsertPlayerSession(regionIndex, tribeIndex, x, z){
     if (!sb) return;
@@ -1721,6 +1754,7 @@
         hp: currentHp,
         equipped_weapon: itemNameFromKey(equippedWeapon),
         equipped_armor: itemNameFromKey(equippedArmor),
+        vote_for: myVote,
         last_seen: new Date().toISOString(),
       });
     } catch (e) { console.warn('upsert player_sessions falhou:', e); }
@@ -1730,6 +1764,111 @@
     if (!sb) return;
     try { await sb.from('player_sessions').delete().eq('player_id', myPlayerId); }
     catch (e) { console.warn('delete player_sessions falhou:', e); }
+  }
+
+  // ---------- ELEIÇÃO DE LÍDER + CONTAGEM FINAL ----------
+  // líder não é um cargo salvo em lugar nenhum — é sempre recalculado ao vivo a partir dos votos de quem
+  // tá presente na tribo agora (o próprio voto vem no heartbeat de player_sessions, "vote_for")
+  function tribemateEntries(){
+    const mates = [{ id: myPlayerId, name: playerName || 'Bárbaro Anônimo', voteFor: myVote }];
+    Object.entries(otherPlayers).forEach(([id, rp]) => {
+      if (id.startsWith(BOT_ID_PREFIX) || rp.tribe !== currentTribeIndex) return;
+      mates.push({ id, name: (rp.mesh.userData && rp.mesh.userData.name) || 'Bárbaro Anônimo', voteFor: rp.voteFor || null });
+    });
+    return mates;
+  }
+
+  function currentTribeLeaderId(){
+    const tally = {};
+    tribemateEntries().forEach(m => { if (m.voteFor) tally[m.voteFor] = (tally[m.voteFor]||0) + 1; });
+    let leader = null, best = 0;
+    Object.entries(tally).forEach(([id, count]) => {
+      if (count > best || (count === best && leader && id < leader)) { best = count; leader = id; }
+    });
+    return best > 0 ? leader : null;
+  }
+
+  window.__vulcanisCastVote = async function(targetId){
+    myVote = targetId;
+    updateElectionScreen();
+    if (!sb) return;
+    try { await sb.from('player_sessions').update({ vote_for: targetId }).eq('player_id', myPlayerId); }
+    catch (e) { console.warn('votar falhou:', e); }
+  };
+
+  async function fetchRoundState(regionIndex){
+    if (!sb) return;
+    try {
+      const { data, error } = await sb.from('region_rounds').select('started_by_tribe, ends_at').eq('region_index', regionIndex).maybeSingle();
+      if (error) throw error;
+      roundEndsAt = data && data.ends_at ? new Date(data.ends_at).getTime() : null;
+      roundStartedByTribe = data ? data.started_by_tribe : null;
+      updateRoundCountdownDisplay();
+    } catch (e) { console.warn('fetch region_rounds falhou:', e); }
+  }
+
+  window.__vulcanisStartCountdown = async function(){
+    if (currentTribeLeaderId() !== myPlayerId || !eraCompleted(2) || (roundEndsAt && roundEndsAt > Date.now()) || !sb) return;
+    const endsAtIso = new Date(Date.now() + 30*60*1000).toISOString();
+    try {
+      await sb.from('region_rounds').upsert({
+        region_index: currentRegionIndex,
+        started_by_tribe: currentTribeIndex,
+        ends_at: endsAtIso,
+        updated_at: new Date().toISOString(),
+      });
+      roundEndsAt = new Date(endsAtIso).getTime();
+      roundStartedByTribe = currentTribeIndex;
+      updateRoundCountdownDisplay();
+      updateElectionScreen();
+      showGatherMsg('⏱️ Contagem final de 30 minutos ligada!');
+    } catch (e) { console.warn('iniciar contagem falhou:', e); }
+  };
+
+  function updateRoundCountdownDisplay(){
+    if (!roundCountdownEl) return;
+    if (!roundEndsAt) { roundCountdownEl.style.display = 'none'; return; }
+    const remainingMs = roundEndsAt - Date.now();
+    const tribeName = TRIBE_NAMES[roundStartedByTribe] || '?';
+    if (remainingMs <= 0) {
+      roundCountdownEl.textContent = `⏱️ Tempo esgotado! (contagem ligada pela tribo ${tribeName})`;
+    } else {
+      const totalSec = Math.floor(remainingMs/1000);
+      const mm = String(Math.floor(totalSec/60)).padStart(2,'0');
+      const ss = String(totalSec%60).padStart(2,'0');
+      roundCountdownEl.textContent = `⏱️ ${mm}:${ss} — contagem final ligada pela tribo ${tribeName}`;
+    }
+    roundCountdownEl.style.display = 'block';
+  }
+
+  function updateElectionScreen(){
+    if (!electionBodyEl) return;
+    const mates = tribemateEntries();
+    const leaderId = currentTribeLeaderId();
+    const rowsHtml = mates.map(m => {
+      const isMe = m.id === myPlayerId;
+      const isLeader = m.id === leaderId;
+      const votedByMe = myVote === m.id;
+      return `<div class="slotRow">
+        <span class="slotIcon">${isLeader ? '👑' : '🧑'}</span>
+        <div style="flex:1"><div>${m.name}${isMe ? ' (você)' : ''}</div><div class="slotLabel">${isLeader ? 'líder atual' : ''}</div></div>
+        <button ${votedByMe ? 'disabled' : ''} onclick="window.__vulcanisCastVote('${m.id}')">${votedByMe ? 'Votado' : 'Votar'}</button>
+      </div>`;
+    }).join('');
+
+    const eraOk = eraCompleted(2); // Idade Medieval
+    const iAmLeader = leaderId === myPlayerId;
+    const roundActive = roundEndsAt && roundEndsAt > Date.now();
+    let actionHtml;
+    if (roundActive) {
+      actionHtml = `<div class="era-locked">Contagem já em andamento (ligada pela tribo ${TRIBE_NAMES[roundStartedByTribe]}).</div>`;
+    } else if (iAmLeader) {
+      actionHtml = `<button ${eraOk ? '' : 'disabled'} onclick="window.__vulcanisStartCountdown()">${eraOk ? 'Ligar contagem final (30 min)' : 'Precisa completar a Idade Medieval'}</button>`;
+    } else {
+      actionHtml = `<div class="era-locked">${leaderId ? 'Só o líder pode ligar a contagem.' : 'Ninguém votou ainda — sem líder definido.'}</div>`;
+    }
+
+    electionBodyEl.innerHTML = `<div class="craftList">${rowsHtml}</div><div style="margin-top:14px;text-align:center">${actionHtml}</div>`;
   }
 
   // ---------- BOTS: linhas normais em player_sessions (player_id "bot_..."), simulados por quem estiver
@@ -1891,6 +2030,10 @@
   const exitGameBtnEl = document.getElementById('exitGameBtn');
   const skillShortcutBtnEl = document.getElementById('skillShortcutBtn');
   const invShortcutBtnEl = document.getElementById('invShortcutBtn');
+  const electionShortcutBtnEl = document.getElementById('electionShortcutBtn');
+  const electionScreenEl = document.getElementById('electionScreen');
+  const electionBodyEl = document.getElementById('electionBody');
+  const roundCountdownEl = document.getElementById('roundCountdown');
   const gatherMsgEl = document.getElementById('gatherMsg');
   const joystickBaseEl = document.getElementById('joystickBase');
   const joystickKnobEl = document.getElementById('joystickKnob');
@@ -2089,6 +2232,10 @@
       structureFetchTimer = 0;
       botStates = {};
       botTickTimer = 0;
+      myVote = null;
+      roundEndsAt = null;
+      roundStartedByTribe = null;
+      roundFetchTimer = 0;
 
       scene = 'gameplay';
       gameplayZoom = 1.8; // já começa afastado
@@ -2099,6 +2246,7 @@
       exitGameBtnEl.style.display = 'block';
       skillShortcutBtnEl.style.display = 'block';
       invShortcutBtnEl.style.display = 'block';
+      electionShortcutBtnEl.style.display = 'block';
       minimapEl.style.display = 'block';
       updateGameHud();
       updateMinimap();
@@ -2108,6 +2256,7 @@
       fetchOtherPlayersInRegion(regionIndex);
       fetchRegionStructures(regionIndex);
       ensureBotsSpawned(regionIndex, tribeIndex);
+      fetchRoundState(regionIndex);
 
       // o ponto de luz cresce, revelando a cena — como saindo de dentro da caverna
       caveLightEl.style.transition = 'width 1.1s ease-out, height 1.1s ease-out';
@@ -2136,9 +2285,12 @@
       exitGameBtnEl.style.display = 'none';
       skillShortcutBtnEl.style.display = 'none';
       invShortcutBtnEl.style.display = 'none';
+      electionShortcutBtnEl.style.display = 'none';
+      roundCountdownEl.style.display = 'none';
       minimapEl.style.display = 'none';
       skillScreenEl.classList.remove('on');
       invScreenEl.classList.remove('on');
+      electionScreenEl.classList.remove('on');
       openScreen = null;
       planetLabelEl.style.display = 'block';
       gameplayScene = null;
@@ -2328,6 +2480,7 @@
     `;
     if (openScreen === 'skill') updateSkillScreen();
     if (openScreen === 'inv') updateInvScreen();
+    if (openScreen === 'election') updateElectionScreen();
   }
 
   // ---------- SKILLTREE (T): gasta XP pra desbloquear receitas, quadrado por quadrado ----------
@@ -2590,6 +2743,7 @@
     openScreen = 'skill';
     skillScreenEl.classList.add('on');
     invScreenEl.classList.remove('on');
+    electionScreenEl.classList.remove('on');
     cancelGather();
     updateSkillScreen();
   };
@@ -2598,13 +2752,24 @@
     openScreen = 'inv';
     invScreenEl.classList.add('on');
     skillScreenEl.classList.remove('on');
+    electionScreenEl.classList.remove('on');
     cancelGather();
     updateInvScreen();
+  };
+  window.__vulcanisOpenElection = function(){
+    if (scene !== 'gameplay' || transitioning) return;
+    openScreen = 'election';
+    electionScreenEl.classList.add('on');
+    skillScreenEl.classList.remove('on');
+    invScreenEl.classList.remove('on');
+    cancelGather();
+    updateElectionScreen();
   };
   window.__vulcanisCloseScreens = function(){
     openScreen = null;
     skillScreenEl.classList.remove('on');
     invScreenEl.classList.remove('on');
+    electionScreenEl.classList.remove('on');
   };
 
   function showGatherMsg(text, persist){
@@ -2827,6 +2992,9 @@
     } else if (k === 'i') {
       if (openScreen === 'inv') window.__vulcanisCloseScreens();
       else window.__vulcanisOpenInv();
+    } else if (k === 'v') {
+      if (openScreen === 'election') window.__vulcanisCloseScreens();
+      else window.__vulcanisOpenElection();
     }
   });
   window.addEventListener('keyup', (e) => { keys[e.key.toLowerCase()] = false; });
@@ -2988,6 +3156,7 @@
     if (hudRefreshTimer >= 1) {
       hudRefreshTimer = 0;
       updateGameHud();
+      updateRoundCountdownDisplay();
     }
 
     // combate: aproximação automática, sem clique — checa inimigos no alcance a cada cooldown
@@ -3016,6 +3185,14 @@
     if (botTickTimer >= BOT_TICK_INTERVAL) {
       botTickTimer = 0;
       if (isBotHostNow()) tickBotsAsHost();
+    }
+
+    // contagem final: estado raro de mudar, só reconsulta de longe em longe (o ponteiro mm:ss local já
+    // conta sozinho a cada segundo lá em cima, isso só pega se outra tribo ligou enquanto eu não olhava)
+    roundFetchTimer += dt;
+    if (roundFetchTimer >= ROUND_FETCH_INTERVAL) {
+      roundFetchTimer = 0;
+      fetchRoundState(currentRegionIndex);
     }
 
     // câmera travada no personagem — sem lerp, sem lag, sem guinada. só a distância muda com o scroll.
