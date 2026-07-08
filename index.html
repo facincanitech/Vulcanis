@@ -1013,14 +1013,14 @@
       respawnTimer = 0;
 
       scene = 'gameplay';
-      camera.position.copy(player.position.clone().add(new THREE.Vector3(0, 70, 55)));
+      gameplayZoom = 1.8; // já começa afastado
+      camera.position.copy(player.position.clone().add(new THREE.Vector3(0, 70, 55).multiplyScalar(gameplayZoom)));
       camera.lookAt(player.position);
       planetLabelEl.style.display = 'none';
       gameHudEl.style.display = 'block';
       exitGameBtnEl.style.display = 'block';
       skillShortcutBtnEl.style.display = 'block';
       invShortcutBtnEl.style.display = 'block';
-      gameplayZoom = 1;
       updateGameHud();
 
       // o ponto de luz cresce, revelando a cena — como saindo de dentro da caverna
