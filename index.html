@@ -11,6 +11,11 @@
     font-size:13px; background:rgba(0,0,0,0.35); padding:8px 12px; border-radius:6px;
     pointer-events:none; line-height:1.5; z-index:10;
   }
+  #versionTag {
+    position:fixed; top:12px; right:14px; color:#8fa8b8; font-family:monospace;
+    font-size:11px; background:rgba(0,0,0,0.35); padding:5px 10px; border-radius:6px;
+    pointer-events:none; z-index:50;
+  }
   #fade {
     position:fixed; top:0; left:0; width:100%; height:100%; background:#000;
     opacity:0; pointer-events:none; transition: opacity 0.6s ease; z-index:20;
@@ -93,8 +98,8 @@
     border:1px solid #4a6072; border-radius:8px; padding:16px 10px; text-align:center;
     background:#112028; color:#cfe8ff; cursor:pointer; font-size:12px;
   }
-  .skillSquare.unlocked { background:#1f3a2a; border-color:#5fdc7a; cursor:default; }
-  .skillSquare.disabled { opacity:0.35; cursor:not-allowed; }
+  .skillSquare.unlocked { background:#1f3a2a; border-color:#5fdc7a; cursor:default; pointer-events:none; }
+  .skillSquare.disabled { opacity:0.35; cursor:not-allowed; pointer-events:none; }
 
   /* inventário: recursos + lista de craft lado a lado */
   .invLayout { display:flex; gap:22px; flex-wrap:wrap; margin-top:10px; }
@@ -104,6 +109,12 @@
     display:flex; justify-content:space-between; padding:5px 0;
     border-bottom:1px solid #1e3d26; font-size:13px;
   }
+  .slotRow {
+    display:flex; align-items:center; gap:10px; background:#132420; border:1px solid #26402f;
+    border-radius:6px; padding:8px 10px; margin-bottom:6px; font-size:13px;
+  }
+  .slotIcon { font-size:20px; }
+  .slotLabel { font-size:10px; opacity:0.6; text-transform:uppercase; }
   .craftList { display:flex; flex-direction:column; gap:6px; }
   .craftRow {
     display:flex; align-items:center; justify-content:space-between; gap:10px;
@@ -118,8 +129,8 @@
 </head>
 <body>
 
+<div id="versionTag">VulcaniS — protótipo v0.1</div>
 <div id="hud">
-  VulcaniS — protótipo v0.1<br>
   Scroll = zoom na Terra (aproxima e troca de tela)<br>
   Sistema em escala/velocidade artificiais
 </div>
@@ -271,6 +282,21 @@
   // recursos brutos que existem no mundo e entram no inventário
   const RESOURCE_KEYS = ['graveto', 'lasca', 'corda', 'madeira', 'minerio'];
   const RESOURCE_LABELS = { graveto:'Graveto', lasca:'Lasca de Pedra', corda:'Corda de Arbusto', madeira:'Madeira', minerio:'Minério' };
+  const RESOURCE_ICONS  = { graveto:'🌿', lasca:'🪨', corda:'🪢', madeira:'🪵', minerio:'💎' };
+
+  // ícone do item craftado, pra tela de inventário/craft — também decide o slot de equipar
+  function itemIcon(name){
+    if (/Armadura|Colete/.test(name)) return '🛡️';
+    if (/Escudo/.test(name))          return '🛡️';
+    if (/Machado|Picareta/.test(name))return '🔧';
+    if (/Arco|Besta/.test(name))      return '🏹';
+    if (/Dinamite|Granada|Canhão/.test(name)) return '💣';
+    if (/Drone/.test(name))           return '🛰️';
+    return '⚔️';
+  }
+  function itemSlot(name){
+    return /Armadura|Colete|Escudo/.test(name) ? 'armor' : 'weapon';
+  }
 
   // eras de evolução: da Idade da Pedra até a Era Moderna atual.
   // pra abrir a próxima era, precisa ter desbloqueado (na Skilltree) TODOS os itens da era atual.
@@ -569,6 +595,8 @@
   let playerXp = 0;                // XP gasto pra desbloquear receitas na Skilltree (T)
   let unlockedRecipes = new Set(); // chaves "EraName:ToolName" — desbloqueadas na Skilltree (T)
   let craftedCounts = {};          // chaves "EraName:ToolName" -> quantidade craftada no Inventário (I)
+  let equippedWeapon = null;       // chave "EraName:ToolName" equipada no personagem
+  let equippedArmor = null;
   let activeEraTab = 0;            // aba de era selecionada na Skilltree
   let openScreen = null;           // null | 'skill' | 'inv'
 
@@ -684,6 +712,8 @@
       playerXp = 0;
       unlockedRecipes = new Set();
       craftedCounts = {};
+      equippedWeapon = null;
+      equippedArmor = null;
       activeEraTab = 0;
       openScreen = null;
 
@@ -751,10 +781,10 @@
   // painel pequeno sempre visível: tribo, XP, inventário rápido (os botões de atalho ficam fixos à parte)
   function updateGameHud(){
     const tribeName = TRIBE_NAMES[currentTribeIndex];
-    const invHtml = RESOURCE_KEYS.map(k => `${RESOURCE_LABELS[k]}: ${inventory[k]}`).join(' &nbsp;|&nbsp; ');
+    const invHtml = RESOURCE_KEYS.map(k => `${RESOURCE_ICONS[k]} ${inventory[k]}`).join(' &nbsp;|&nbsp; ');
     gameHudEl.innerHTML = `
       <b>Tribo ${tribeName}</b> — ${currentRegion ? currentRegion.name : ''}<br>
-      XP: ${playerXp}<br>
+      ⭐ XP: ${playerXp}<br>
       ${invHtml}
     `;
     if (openScreen === 'skill') updateSkillScreen();
@@ -816,9 +846,22 @@
     updateSkillScreen();
   };
 
-  // ---------- INVENTÁRIO (I): recursos + craft das receitas já desbloqueadas ----------
+  // ---------- INVENTÁRIO (I): recursos + slots de equipamento + craft das receitas já desbloqueadas ----------
+  function itemNameFromKey(key){
+    return key ? key.split(':')[1] : null;
+  }
+
   function updateInvScreen(){
-    const resHtml = RESOURCE_KEYS.map(k => `<div class="resRow"><span>${RESOURCE_LABELS[k]}</span><span>${inventory[k]}</span></div>`).join('');
+    const resHtml = RESOURCE_KEYS.map(k =>
+      `<div class="resRow"><span>${RESOURCE_ICONS[k]} ${RESOURCE_LABELS[k]}</span><span>${inventory[k]}</span></div>`
+    ).join('');
+
+    const weaponName = itemNameFromKey(equippedWeapon);
+    const armorName  = itemNameFromKey(equippedArmor);
+    const slotsHtml = `
+      <div class="slotRow"><span class="slotIcon">⚔️</span><div><div class="slotLabel">Arma</div><div>${weaponName || '— vazio —'}</div></div></div>
+      <div class="slotRow"><span class="slotIcon">🛡️</span><div><div class="slotLabel">Armadura</div><div>${armorName || '— vazio —'}</div></div></div>
+    `;
 
     let craftItemsHtml = '';
     ERAS.forEach((era) => {
@@ -826,15 +869,20 @@
         const key = era.name + ':' + tool.name;
         if (!unlockedRecipes.has(key)) return;
         const owned = craftedCounts[key] || 0;
+        const slot = itemSlot(tool.name);
+        const equipped = (slot === 'armor' ? equippedArmor : equippedWeapon) === key;
         const costsHtml = Object.entries(tool.costs).map(([k,v]) => {
           const have = inventory[k]||0;
           const ok = have >= v;
-          return `<span class="${ok?'costOk':'costBad'}">${RESOURCE_LABELS[k]} ${have}/${v}</span>`;
+          return `<span class="${ok?'costOk':'costBad'}">${RESOURCE_ICONS[k]} ${have}/${v}</span>`;
         }).join(' ');
         craftItemsHtml += `<div class="craftRow">
-          <div>${tool.name}${owned ? ` <span style="opacity:.6">(x${owned})</span>` : ''}</div>
+          <div>${itemIcon(tool.name)} ${tool.name}${owned ? ` <span style="opacity:.6">(x${owned})</span>` : ''}</div>
           <div class="costs">${costsHtml}</div>
-          <button ${canCraft(tool) ? '' : 'disabled'} onclick="window.__vulcanisCraftItem('${key}')">Craftar</button>
+          <div>
+            <button ${canCraft(tool) ? '' : 'disabled'} onclick="window.__vulcanisCraftItem('${key}')">Craftar</button>
+            <button ${owned && !equipped ? '' : 'disabled'} onclick="window.__vulcanisEquip('${key}')">${equipped ? 'Equipado' : 'Equipar'}</button>
+          </div>
         </div>`;
       });
     });
@@ -844,11 +892,22 @@
 
     invBodyEl.innerHTML = `
       <div class="invLayout">
-        <div class="invResources"><h3>Recursos</h3>${resHtml}</div>
+        <div class="invResources">
+          <h3>Recursos</h3>${resHtml}
+          <h3 style="margin-top:14px">Equipado</h3>${slotsHtml}
+        </div>
         <div class="invCraftCol"><h3>Craft</h3><div class="craftList">${craftItemsHtml}</div></div>
       </div>
     `;
   }
+
+  window.__vulcanisEquip = function(key){
+    const name = itemNameFromKey(key);
+    if (!name || !(craftedCounts[key] > 0)) return;
+    if (itemSlot(name) === 'armor') equippedArmor = key;
+    else equippedWeapon = key;
+    updateInvScreen();
+  };
 
   window.__vulcanisCraftItem = function(key){
     let tool = null;
