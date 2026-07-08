@@ -195,7 +195,7 @@
 </head>
 <body>
 
-<div id="versionTag">VulcaniS — protótipo v0.15</div>
+<div id="versionTag">VulcaniS — protótipo v0.16</div>
 <div id="welcomeScreen">
   <h1>Bem-vindo a Vulcanis</h1>
   <div class="hint">Um mundo de tribos, evolução e um vulcão que nunca é 100% previsível.</div>
@@ -599,27 +599,27 @@
   }
 
   const RESOURCE_TYPES = [
-    { type:'graveto', label:'Graveto', key:'graveto', amount:2, xp:3, instant:true, weight:3,
+    { type:'graveto', label:'Graveto', key:'graveto', amount:4, xp:3, instant:true, weight:3,
       build: () => {
         const m = new THREE.Mesh(new THREE.CylinderGeometry(0.35,0.45,7,6), new THREE.MeshStandardMaterial({ color:0x6b4a2f }));
         m.rotation.z = Math.PI/2.4; m.rotation.y = Math.random()*Math.PI;
         return m;
       }, yOff:0.6 },
-    { type:'lasca', label:'Lasca de Pedra', key:'lasca', amount:2, xp:3, instant:true, weight:3,
+    { type:'lasca', label:'Lasca de Pedra', key:'lasca', amount:4, xp:3, instant:true, weight:3,
       build: () => new THREE.Mesh(new THREE.TetrahedronGeometry(1.8,0), new THREE.MeshStandardMaterial({ color:0x8a8a8a })), yOff:0.5 },
-    { type:'arbusto', label:'Corda de Arbusto', key:'corda', amount:2, xp:3, instant:true, weight:2,
+    { type:'arbusto', label:'Corda de Arbusto', key:'corda', amount:4, xp:3, instant:true, weight:2,
       build: () => new THREE.Mesh(new THREE.IcosahedronGeometry(2.2,0), new THREE.MeshStandardMaterial({ color:0x3a7d3f })), yOff:1.6 },
-    { type:'arvore',  label:'Árvore',  key:'madeira', amount:5, xp:8, instant:false, gatherTime:1.8, tool:'Machado', weight:3,
+    { type:'arvore',  label:'Árvore',  key:'madeira', amount:10, xp:8, instant:false, gatherTime:1.8, tool:'Machado', weight:3,
       build: buildTree, yOff:0 },
-    { type:'minerio', label:'Jazida de Minério', key:'minerio', amount:6, xp:12, instant:false, gatherTime:2.4, tool:'Picareta', weight:2,
+    { type:'minerio', label:'Jazida de Minério', key:'minerio', amount:12, xp:12, instant:false, gatherTime:2.4, tool:'Picareta', weight:2,
       build: () => buildOreCluster(0x5f8fae, { metalness:0.4, roughness:0.5 }), yOff:0 },
-    { type:'ferro', label:'Jazida de Ferro', key:'ferro', amount:6, xp:16, instant:false, gatherTime:2.6, tool:'Picareta', weight:1.2,
+    { type:'ferro', label:'Jazida de Ferro', key:'ferro', amount:12, xp:16, instant:false, gatherTime:2.6, tool:'Picareta', weight:1.2,
       build: () => buildOreCluster(0x8a5a4a, { metalness:0.3, roughness:0.6 }), yOff:0 },
-    { type:'ouro', label:'Jazida de Ouro', key:'ouro', amount:4, xp:26, instant:false, gatherTime:3, tool:'Picareta', weight:0.4,
+    { type:'ouro', label:'Jazida de Ouro', key:'ouro', amount:8, xp:26, instant:false, gatherTime:3, tool:'Picareta', weight:0.4,
       build: () => buildOreCluster(0xe0b83a, { metalness:0.6, roughness:0.35, emissive:0x3a2c00, emissiveIntensity:0.3 }), yOff:0 },
-    { type:'prata', label:'Jazida de Prata', key:'prata', amount:5, xp:20, instant:false, gatherTime:2.8, tool:'Picareta', weight:0.7,
+    { type:'prata', label:'Jazida de Prata', key:'prata', amount:10, xp:20, instant:false, gatherTime:2.8, tool:'Picareta', weight:0.7,
       build: () => buildOreCluster(0xcfd6dc, { metalness:0.7, roughness:0.3 }), yOff:0 },
-    { type:'carvao', label:'Jazida de Carvão', key:'carvao', amount:6, xp:13, instant:false, gatherTime:2.3, tool:'Picareta', weight:1.4,
+    { type:'carvao', label:'Jazida de Carvão', key:'carvao', amount:12, xp:13, instant:false, gatherTime:2.3, tool:'Picareta', weight:1.4,
       build: () => buildOreCluster(0x232323, { metalness:0.1, roughness:0.9 }), yOff:0 },
   ];
   const RESOURCE_TOTAL_WEIGHT = RESOURCE_TYPES.reduce((s,d) => s + d.weight, 0);
@@ -719,7 +719,7 @@
   const NODE_COUNT = 340;
   const GATHER_RANGE = 5.5;
   const PLAYER_SPEED = 55;
-  const RESPAWN_INTERVAL = 30; // segundos entre cada leva de respawn
+  const RESPAWN_INTERVAL = 60; // segundos entre cada leva de respawn — mais lento pra forçar escassez/disputa
   const RESPAWN_BATCH = 10;    // máximo de recursos novos por leva (nunca passa de NODE_COUNT no total)
   const HUNGER_DECAY_PER_SEC = 100/600; // zera em ~10min sem comer
   const HP_REGEN_PER_SEC = 1.5;         // vida regenera aos poucos só com a fome no máximo (100%)
