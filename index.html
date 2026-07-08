@@ -252,6 +252,22 @@
   const SUPABASE_URL = 'https://soiiywujkyswklhmcaak.supabase.co';
   const SUPABASE_KEY = 'sb_publishable_E2qrkMW4tdlqEPyhLrfFDA_ZCfbR4pa';
   let sb = null;
+  // intercepta o WebSocket bruto pra logar o motivo real de fechamento (funciona em qualquer versão da lib)
+  try {
+    const NativeWebSocket = window.WebSocket;
+    window.WebSocket = function(...args){
+      const ws = new NativeWebSocket(...args);
+      if (String(args[0]).indexOf('realtime') !== -1) {
+        ws.addEventListener('open', () => console.log('[VulcaniS] socket ABERTO'));
+        ws.addEventListener('close', (e) => console.log('[VulcaniS] socket FECHADO code=' + e.code + ' reason="' + e.reason + '" limpo=' + e.wasClean));
+        ws.addEventListener('error', (e) => console.log('[VulcaniS] socket ERRO', e));
+      }
+      return ws;
+    };
+    window.WebSocket.prototype = NativeWebSocket.prototype;
+    Object.assign(window.WebSocket, NativeWebSocket);
+  } catch (e) { console.warn('Não deu pra interceptar WebSocket:', e); }
+
   try {
     if (window.supabase && window.supabase.createClient) {
       sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
