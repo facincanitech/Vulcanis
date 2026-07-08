@@ -259,7 +259,7 @@
 </head>
 <body>
 
-<div id="versionTag">VulcaniS — protótipo v0.20</div>
+<div id="versionTag">VulcaniS — protótipo v0.21</div>
 <div id="welcomeScreen">
   <h1>Bem-vindo a Vulcanis</h1>
   <div class="hint">Um mundo de tribos, evolução e um vulcão que nunca é 100% previsível.</div>
@@ -883,6 +883,11 @@
   const MAP_WORLD_WIDTH = 680; // largura do mapa no mundo 3D (a altura é calculada pela proporção da imagem)
   const mapTexture = new THREE.TextureLoader().load(MAP_IMAGE_PATH);
   mapTexture.colorSpace = THREE.SRGBColorSpace || mapTexture.colorSpace;
+  // mesma imagem, simplificada, na "terrinha" do sistema solar — fica esticada nos polos (mapeamento
+  // equirretangular de uma imagem que não é feita pra isso), mas dá aquele gostinho antes de entrar no planeta
+  earthMat.map = mapTexture;
+  earthMat.color.set(0xffffff);
+  earthMat.needsUpdate = true;
   const mapWorldHeight = MAP_WORLD_WIDTH * (MAP_IMAGE_PX.h / MAP_IMAGE_PX.w);
   const mapPlane = new THREE.Mesh(
     new THREE.PlaneGeometry(MAP_WORLD_WIDTH, mapWorldHeight),
