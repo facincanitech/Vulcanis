@@ -260,7 +260,7 @@
 </head>
 <body>
 
-<div id="versionTag">VulcaniS — protótipo v0.28</div>
+<div id="versionTag">VulcaniS — protótipo v0.29</div>
 <div id="welcomeScreen">
   <h1>Bem-vindo a Vulcanis</h1>
   <div class="hint">Um mundo de tribos, evolução e um vulcão que nunca é 100% previsível.</div>
@@ -2681,14 +2681,6 @@
   const raycaster = new THREE.Raycaster();
   const mouseNDC = new THREE.Vector2();
 
-  function raycastFromEvent(e, targets, recursive){
-    const rect = renderer.domElement.getBoundingClientRect();
-    mouseNDC.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
-    mouseNDC.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
-    raycaster.setFromCamera(mouseNDC, camera);
-    const hits = raycaster.intersectObjects(targets, !!recursive);
-    return hits.length ? hits[0].object : null;
-  }
   // igual à de cima, mas devolve o ponto 3D do clique (não só o objeto) — usado pra achar a região mais próxima
   function raycastPointFromEvent(e, targets){
     const rect = renderer.domElement.getBoundingClientRect();
@@ -2707,18 +2699,16 @@
     return best;
   }
 
-  // recursos/interagíveis podem ser um Group (ex: aglomerado de rochas) — sobe os pais até achar o dono
-  function resolveFromList(hitObject, list, getMesh){
-    let o = hitObject;
-    while (o) {
-      const found = list.find(item => getMesh(item) === o);
-      if (found) return found;
-      o = o.parent;
-    }
-    return null;
-  }
-  function resolveInteractable(hitObject){
-    return resolveFromList(hitObject, interactables, o => o.mesh);
+  // interação por proximidade — igual à coleta, não precisa mirar/clicar exatamente na estrutura,
+  // só chegar perto e tocar/clicar em qualquer lugar. Vulcão tem alcance maior por ser bem maior fisicamente.
+  function findNearestInteractable(){
+    let best = null, bestDist = Infinity;
+    interactables.forEach(o => {
+      const range = o.type === 'volcano' ? INTERACT_RANGE + 25 : INTERACT_RANGE;
+      const d = player.position.distanceTo(o.mesh.position);
+      if (d <= range && d < bestDist) { bestDist = d; best = o; }
+    });
+    return best;
   }
 
   renderer.domElement.addEventListener('click', (e) => {
@@ -2729,13 +2719,10 @@
 
   renderer.domElement.addEventListener('mousedown', (e) => {
     if (transitioning || uiOpen || openScreen || plantMenuOpen || offerMenuOpen || scene !== 'gameplay') return;
-    if (interactables.length) {
-      const interactHit = raycastFromEvent(e, interactables.map(o => o.mesh), true);
-      const obj = interactHit ? resolveInteractable(interactHit) : null;
-      if (obj && obj.type === 'farm') handleFarmInteract();
-      else if (obj && obj.type === 'warehouse') handleWarehouseInteract();
-      else if (obj && obj.type === 'volcano') handleVolcanoInteract();
-    }
+    const obj = findNearestInteractable();
+    if (obj && obj.type === 'farm') handleFarmInteract();
+    else if (obj && obj.type === 'warehouse') handleWarehouseInteract();
+    else if (obj && obj.type === 'volcano') handleVolcanoInteract();
   });
 
   // toque no celular: um dedo só faz as duas coisas — tap rápido e parado = clique (seleciona região / interage),
@@ -2746,9 +2733,8 @@
       if (point) openTribeSelect(nearestRegionIndex(point.x, point.z));
       return;
     }
-    if (scene === 'gameplay' && !openScreen && !plantMenuOpen && !offerMenuOpen && interactables.length) {
-      const interactHit = raycastFromEvent(pt, interactables.map(o => o.mesh), true);
-      const obj = interactHit ? resolveInteractable(interactHit) : null;
+    if (scene === 'gameplay' && !openScreen && !plantMenuOpen && !offerMenuOpen) {
+      const obj = findNearestInteractable();
       if (obj && obj.type === 'farm') handleFarmInteract();
       else if (obj && obj.type === 'warehouse') handleWarehouseInteract();
       else if (obj && obj.type === 'volcano') handleVolcanoInteract();
