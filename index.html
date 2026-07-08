@@ -56,17 +56,18 @@
     font-family:monospace; background:rgba(0,0,0,0.45); padding:6px 12px; border-radius:6px;
     display:none; z-index:10; pointer-events:none;
   }
-  #craftScreen {
+  .screenOverlay {
     position:fixed; inset:0; background:rgba(0,0,0,0.72); display:none;
     align-items:center; justify-content:center; z-index:40; font-family:monospace;
   }
-  #craftScreen.on { display:flex; }
-  #craftPanel {
-    width:min(720px, 92vw); max-height:82vh; overflow-y:auto; background:#0d1a14;
+  .screenOverlay.on { display:flex; }
+  .screenPanel {
+    width:min(780px, 92vw); max-height:84vh; overflow-y:auto; background:#0d1a14;
     border:1px solid #3a5a44; border-radius:10px; padding:18px 20px; color:#eaf6ff;
   }
-  #craftPanel h2 { margin:0 0 12px; font-size:18px; }
-  #craftCloseBtn {
+  .screenPanel h2 { margin:0 0 4px; font-size:18px; }
+  .screenPanel .hint { opacity:0.6; font-size:11px; margin-bottom:10px; }
+  .screenCloseBtn {
     margin-top:14px; background:transparent; border:1px solid #888; color:#ccc;
     padding:7px 14px; border-radius:6px; cursor:pointer; font-family:monospace;
   }
@@ -79,13 +80,30 @@
   .eraTab.locked { opacity:0.35; cursor:not-allowed; }
   .eraTab.done { border-color:#5fdc7a; }
   .era-locked { opacity:0.6; font-size:12px; margin-top:8px; }
+
+  /* skilltree: grade de quadrados pra desbloquear receitas */
+  .skillGrid { display:grid; grid-template-columns:repeat(auto-fill, minmax(150px,1fr)); gap:10px; margin-top:10px; }
+  .skillSquare {
+    border:1px solid #4a6072; border-radius:8px; padding:16px 10px; text-align:center;
+    background:#112028; color:#cfe8ff; cursor:pointer; font-size:12px;
+  }
+  .skillSquare.unlocked { background:#1f3a2a; border-color:#5fdc7a; cursor:default; }
+  .skillSquare.disabled { opacity:0.35; cursor:not-allowed; }
+
+  /* inventário: recursos + lista de craft lado a lado */
+  .invLayout { display:flex; gap:22px; flex-wrap:wrap; margin-top:10px; }
+  .invResources, .invCraftCol { flex:1; min-width:230px; }
+  .invResources h3, .invCraftCol h3 { margin:0 0 8px; font-size:13px; opacity:0.8; }
+  .resRow {
+    display:flex; justify-content:space-between; padding:5px 0;
+    border-bottom:1px solid #1e3d26; font-size:13px;
+  }
   .craftList { display:flex; flex-direction:column; gap:6px; }
   .craftRow {
     display:flex; align-items:center; justify-content:space-between; gap:10px;
     background:#132420; border:1px solid #26402f; border-radius:6px; padding:8px 10px;
     font-size:12px;
   }
-  .craftRow.done { opacity:0.55; }
   .craftRow .costs { display:flex; gap:8px; flex-wrap:wrap; font-size:11px; }
   .costOk  { color:#8fe8a0; }
   .costBad { color:#e88f8f; }
@@ -116,11 +134,20 @@
 <div id="gameHud"></div>
 <button id="exitGameBtn">Sair da região (ESC)</button>
 <div id="gatherMsg"></div>
-<div id="craftScreen">
-  <div id="craftPanel">
-    <h2>Crafting</h2>
-    <div id="craftBody"></div>
-    <button id="craftCloseBtn">Fechar (ESC)</button>
+<div id="skillScreen" class="screenOverlay">
+  <div id="skillPanel" class="screenPanel">
+    <h2>Skilltree [T]</h2>
+    <div class="hint">Clique nos quadrados pra desbloquear a receita. Desbloqueando todos os itens da era, a próxima abre.</div>
+    <div id="skillBody"></div>
+    <button class="screenCloseBtn" onclick="window.__vulcanisCloseScreens()">Fechar (ESC)</button>
+  </div>
+</div>
+<div id="invScreen" class="screenOverlay">
+  <div id="invPanel" class="screenPanel">
+    <h2>Inventário [I]</h2>
+    <div class="hint">Craft consome os recursos coletados. Só aparecem aqui as receitas já desbloqueadas na Skilltree.</div>
+    <div id="invBody"></div>
+    <button class="screenCloseBtn" onclick="window.__vulcanisCloseScreens()">Fechar (ESC)</button>
   </div>
 </div>
 <div id="fade"></div>
@@ -529,17 +556,20 @@
   let currentRegion = null;
   let currentTribeIndex = 0;
   let inventory = { graveto:0, lasca:0, corda:0, madeira:0, minerio:0 };
-  let unlockedTools = new Set(); // chaves "EraName:ToolName"
-  let activeEraTab = 0;    // aba de era selecionada na tela de craft
-  let craftOpen = false;
+  let unlockedRecipes = new Set(); // chaves "EraName:ToolName" — desbloqueadas na Skilltree (T)
+  let craftedCounts = {};          // chaves "EraName:ToolName" -> quantidade craftada no Inventário (I)
+  let activeEraTab = 0;            // aba de era selecionada na Skilltree
+  let openScreen = null;           // null | 'skill' | 'inv'
 
   const fadeEl = document.getElementById('fade');
   const hudEl = document.getElementById('hud');
   const planetLabelEl = document.getElementById('planetLabel');
   const tribeSelectEl = document.getElementById('tribeSelect');
   const gameHudEl = document.getElementById('gameHud');
-  const craftScreenEl = document.getElementById('craftScreen');
-  const craftBodyEl = document.getElementById('craftBody');
+  const skillScreenEl = document.getElementById('skillScreen');
+  const skillBodyEl = document.getElementById('skillBody');
+  const invScreenEl = document.getElementById('invScreen');
+  const invBodyEl = document.getElementById('invBody');
   const exitGameBtnEl = document.getElementById('exitGameBtn');
   const gatherMsgEl = document.getElementById('gatherMsg');
 
@@ -638,9 +668,10 @@
       currentRegion = region;
       currentTribeIndex = tribeIndex;
       inventory = { graveto:0, lasca:0, corda:0, madeira:0, minerio:0 };
-      unlockedTools = new Set();
+      unlockedRecipes = new Set();
+      craftedCounts = {};
       activeEraTab = 0;
-      craftOpen = false;
+      openScreen = null;
 
       scene = 'gameplay';
       camera.position.copy(player.position.clone().add(new THREE.Vector3(0, 70, 55)));
@@ -664,8 +695,9 @@
       zoom = 0.6;
       gameHudEl.style.display = 'none';
       exitGameBtnEl.style.display = 'none';
-      craftScreenEl.classList.remove('on');
-      craftOpen = false;
+      skillScreenEl.classList.remove('on');
+      invScreenEl.classList.remove('on');
+      openScreen = null;
       planetLabelEl.style.display = 'block';
       gameplayScene = null;
       player = null;
@@ -675,40 +707,44 @@
   }
   exitGameBtnEl.addEventListener('click', exitGameplay);
 
-  // ---------- ERAS / SKILLTREE ----------
+  // ---------- ERAS ----------
+  // "desbloquear" (Skilltree/T) = conhecer a receita. "craftar" (Inventário/I) = gastar recursos e ganhar o item.
   function eraCompleted(eraIdx){
     const era = ERAS[eraIdx];
-    return era.tools.every(tool => unlockedTools.has(era.name + ':' + tool.name));
+    return era.tools.every(tool => unlockedRecipes.has(era.name + ':' + tool.name));
   }
   function isEraUnlocked(eraIdx){
     return eraIdx === 0 || eraCompleted(eraIdx - 1);
   }
   function hasToolNamed(substr){
-    for (const key of unlockedTools) {
-      const toolName = key.split(':')[1];
-      if (toolName && toolName.includes(substr)) return true;
+    for (const key in craftedCounts) {
+      if (craftedCounts[key] > 0) {
+        const toolName = key.split(':')[1];
+        if (toolName && toolName.includes(substr)) return true;
+      }
     }
     return false;
   }
-
   function canCraft(tool){
     return Object.entries(tool.costs).every(([k,v]) => (inventory[k]||0) >= v);
   }
 
-  // painel pequeno sempre visível: tribo, inventário, atalho pra abrir o crafting
+  // painel pequeno sempre visível: tribo, inventário rápido, atalhos das duas telas
   function updateGameHud(){
     const tribeName = TRIBE_NAMES[currentTribeIndex];
     const invHtml = RESOURCE_KEYS.map(k => `${RESOURCE_LABELS[k]}: ${inventory[k]}`).join(' &nbsp;|&nbsp; ');
     gameHudEl.innerHTML = `
       <b>Tribo ${tribeName}</b> — ${currentRegion ? currentRegion.name : ''}<br>
       ${invHtml}<br>
-      <button onclick="window.__vulcanisOpenCraft()">Crafting [C]</button>
+      <button onclick="window.__vulcanisOpenSkill()">Skilltree [T]</button>
+      <button onclick="window.__vulcanisOpenInv()">Inventário [I]</button>
     `;
-    if (craftOpen) updateCraftScreen();
+    if (openScreen === 'skill') updateSkillScreen();
+    if (openScreen === 'inv') updateInvScreen();
   }
 
-  // tela de craft: abas de era + receitas com custo em recursos reais
-  function updateCraftScreen(){
+  // ---------- SKILLTREE (T): desbloqueia receitas, quadrado por quadrado ----------
+  function updateSkillScreen(){
     let tabsHtml = '<div class="eraTabs">';
     ERAS.forEach((era, i) => {
       const unlocked = isEraUnlocked(i);
@@ -723,61 +759,107 @@
 
     const era = ERAS[activeEraTab];
     const unlocked = isEraUnlocked(activeEraTab);
-    let listHtml = '';
+    let gridHtml = '';
     if (!unlocked) {
-      listHtml = `<div class="era-locked">Bloqueado — craft todos os itens de "${ERAS[activeEraTab-1].name}" pra abrir essa era.</div>`;
+      gridHtml = `<div class="era-locked">Bloqueado — desbloqueie todos os itens de "${ERAS[activeEraTab-1].name}" pra abrir essa era.</div>`;
     } else {
+      gridHtml = '<div class="skillGrid">';
       era.tools.forEach((tool, tIdx) => {
         const key = era.name + ':' + tool.name;
-        const costsHtml = Object.entries(tool.costs).map(([k,v]) => {
-          const have = inventory[k]||0;
-          const ok = have >= v;
-          return `<span class="${ok?'costOk':'costBad'}">${RESOURCE_LABELS[k]} ${have}/${v}</span>`;
-        }).join(' ');
-        if (unlockedTools.has(key)) {
-          listHtml += `<div class="craftRow done">&#10003; ${tool.name}</div>`;
-        } else {
-          listHtml += `<div class="craftRow">
-            <div>${tool.name}</div>
-            <div class="costs">${costsHtml}</div>
-            <button ${canCraft(tool) ? '' : 'disabled'} onclick="window.__vulcanisUnlockTool(${activeEraTab},${tIdx})">Craftar</button>
-          </div>`;
-        }
+        const known = unlockedRecipes.has(key);
+        gridHtml += `<div class="skillSquare ${known ? 'unlocked' : ''}" onclick="window.__vulcanisUnlockRecipe(${activeEraTab},${tIdx})">${known ? '&#10003;' : '&#128274;'}<br>${tool.name}</div>`;
       });
+      gridHtml += '</div>';
     }
 
-    craftBodyEl.innerHTML = `${tabsHtml}<div class="craftList">${listHtml}</div>`;
+    skillBodyEl.innerHTML = `${tabsHtml}${gridHtml}`;
   }
 
-  window.__vulcanisOpenCraft = function(){
-    if (scene !== 'gameplay' || transitioning) return;
-    craftOpen = true;
-    craftScreenEl.classList.add('on');
-    cancelGather();
-    updateCraftScreen();
-  };
-  window.__vulcanisCloseCraft = function(){
-    craftOpen = false;
-    craftScreenEl.classList.remove('on');
+  window.__vulcanisUnlockRecipe = function(eraIdx, toolIdx){
+    if (!isEraUnlocked(eraIdx)) return;
+    const era = ERAS[eraIdx];
+    const key = era.name + ':' + era.tools[toolIdx].name;
+    if (unlockedRecipes.has(key)) return;
+    unlockedRecipes.add(key);
+    updateSkillScreen();
+    updateGameHud();
   };
 
   window.__vulcanisSetEraTab = function(eraIdx){
     if (!isEraUnlocked(eraIdx)) return;
     activeEraTab = eraIdx;
-    updateCraftScreen();
+    updateSkillScreen();
   };
 
-  window.__vulcanisUnlockTool = function(eraIdx, toolIdx){
-    if (!isEraUnlocked(eraIdx)) return;
-    const era = ERAS[eraIdx];
-    const tool = era.tools[toolIdx];
-    const key = era.name + ':' + tool.name;
-    if (unlockedTools.has(key)) return;
+  // ---------- INVENTÁRIO (I): recursos + craft das receitas já desbloqueadas ----------
+  function updateInvScreen(){
+    const resHtml = RESOURCE_KEYS.map(k => `<div class="resRow"><span>${RESOURCE_LABELS[k]}</span><span>${inventory[k]}</span></div>`).join('');
+
+    let craftItemsHtml = '';
+    ERAS.forEach((era) => {
+      era.tools.forEach((tool) => {
+        const key = era.name + ':' + tool.name;
+        if (!unlockedRecipes.has(key)) return;
+        const owned = craftedCounts[key] || 0;
+        const costsHtml = Object.entries(tool.costs).map(([k,v]) => {
+          const have = inventory[k]||0;
+          const ok = have >= v;
+          return `<span class="${ok?'costOk':'costBad'}">${RESOURCE_LABELS[k]} ${have}/${v}</span>`;
+        }).join(' ');
+        craftItemsHtml += `<div class="craftRow">
+          <div>${tool.name}${owned ? ` <span style="opacity:.6">(x${owned})</span>` : ''}</div>
+          <div class="costs">${costsHtml}</div>
+          <button ${canCraft(tool) ? '' : 'disabled'} onclick="window.__vulcanisCraftItem('${key}')">Craftar</button>
+        </div>`;
+      });
+    });
+    if (!craftItemsHtml) {
+      craftItemsHtml = `<div class="era-locked">Nenhuma receita desbloqueada ainda — abra a Skilltree [T].</div>`;
+    }
+
+    invBodyEl.innerHTML = `
+      <div class="invLayout">
+        <div class="invResources"><h3>Recursos</h3>${resHtml}</div>
+        <div class="invCraftCol"><h3>Craft</h3><div class="craftList">${craftItemsHtml}</div></div>
+      </div>
+    `;
+  }
+
+  window.__vulcanisCraftItem = function(key){
+    let tool = null;
+    for (const era of ERAS) {
+      const found = era.tools.find(t => (era.name + ':' + t.name) === key);
+      if (found) { tool = found; break; }
+    }
+    if (!tool || !unlockedRecipes.has(key)) return;
     if (!canCraft(tool)) return;
     Object.entries(tool.costs).forEach(([k,v]) => { inventory[k] -= v; });
-    unlockedTools.add(key);
+    craftedCounts[key] = (craftedCounts[key] || 0) + 1;
     updateGameHud();
-    updateCraftScreen();
+    updateInvScreen();
+  };
+
+  // ---------- abrir/fechar as duas telas ----------
+  window.__vulcanisOpenSkill = function(){
+    if (scene !== 'gameplay' || transitioning) return;
+    openScreen = 'skill';
+    skillScreenEl.classList.add('on');
+    invScreenEl.classList.remove('on');
+    cancelGather();
+    updateSkillScreen();
+  };
+  window.__vulcanisOpenInv = function(){
+    if (scene !== 'gameplay' || transitioning) return;
+    openScreen = 'inv';
+    invScreenEl.classList.add('on');
+    skillScreenEl.classList.remove('on');
+    cancelGather();
+    updateInvScreen();
+  };
+  window.__vulcanisCloseScreens = function(){
+    openScreen = null;
+    skillScreenEl.classList.remove('on');
+    invScreenEl.classList.remove('on');
   };
 
   function showGatherMsg(text, persist){
@@ -822,7 +904,7 @@
       return;
     }
     if (node.tool && !hasToolNamed(node.tool)) {
-      showGatherMsg(`Precisa de ${node.tool} pra coletar isso — craft na skilltree`);
+      showGatherMsg(`Precisa de ${node.tool} pra coletar isso — desbloqueie em [T] e craft em [I]`);
       return;
     }
     // encara o recurso enquanto golpeia
@@ -850,13 +932,11 @@
   });
 
   renderer.domElement.addEventListener('mousedown', (e) => {
-    if (transitioning || uiOpen || craftOpen || scene !== 'gameplay' || gatherState) return;
+    if (transitioning || uiOpen || openScreen || scene !== 'gameplay' || gatherState) return;
     const hit = raycastFromEvent(e, resourceNodes.map(n => n.mesh));
     if (hit) tryStartGather(hit);
   });
   window.addEventListener('mouseup', cancelGather);
-
-  document.getElementById('craftCloseBtn').addEventListener('click', () => window.__vulcanisCloseCraft());
 
   const keys = {};
   window.addEventListener('keydown', (e) => {
@@ -864,11 +944,14 @@
     keys[k] = true;
     if (scene !== 'gameplay') return;
     if (k === 'escape') {
-      if (craftOpen) window.__vulcanisCloseCraft();
+      if (openScreen) window.__vulcanisCloseScreens();
       else exitGameplay();
-    } else if (k === 'c') {
-      if (craftOpen) window.__vulcanisCloseCraft();
-      else window.__vulcanisOpenCraft();
+    } else if (k === 't') {
+      if (openScreen === 'skill') window.__vulcanisCloseScreens();
+      else window.__vulcanisOpenSkill();
+    } else if (k === 'i') {
+      if (openScreen === 'inv') window.__vulcanisCloseScreens();
+      else window.__vulcanisOpenInv();
     }
   });
   window.addEventListener('keyup', (e) => { keys[e.key.toLowerCase()] = false; });
@@ -922,7 +1005,7 @@
 
   function updateGameplay(dt){
     let dx = 0, dz = 0;
-    if (!craftOpen) {
+    if (!openScreen) {
       if (keys['w'] || keys['arrowup'])    dz -= 1;
       if (keys['s'] || keys['arrowdown'])  dz += 1;
       if (keys['a'] || keys['arrowleft'])  dx -= 1;
