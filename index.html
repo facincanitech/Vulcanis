@@ -195,7 +195,7 @@
 </head>
 <body>
 
-<div id="versionTag">VulcaniS — protótipo v0.3</div>
+<div id="versionTag">VulcaniS — protótipo v0.4</div>
 <div id="welcomeScreen">
   <h1>Bem-vindo a Vulcanis</h1>
   <div class="hint">Um mundo de tribos, evolução e um vulcão que nunca é 100% previsível.</div>
@@ -681,27 +681,42 @@
   const volcanoes = [];
   const regionGroundMeshes = [];
 
+  // "ilha" orgânica em vez de quadrado: pontos voltados pro centro do mapa esticam mais
+  // (formando pontes de terra entre as regiões, tipo Pangeia), o resto fica irregular tipo litoral.
+  function buildIslandShape(region, regionIndex){
+    const N = 16;
+    const baseRadius = 100;
+    const reachTowardCenter = 95;
+    const toCenter = new THREE.Vector2(-region.cx, -region.cz).normalize();
+    const pts = [];
+    for (let i = 0; i < N; i++){
+      const angle = (i / N) * Math.PI * 2;
+      const dir = new THREE.Vector2(Math.cos(angle), Math.sin(angle));
+      const inwardness = Math.max(0, dir.dot(toCenter));
+      const noise = 0.85 + Math.random() * 0.3;
+      const radius = (baseRadius + inwardness * reachTowardCenter) * noise;
+      pts.push(new THREE.Vector2(Math.cos(angle) * radius, Math.sin(angle) * radius));
+    }
+    const shape = new THREE.Shape();
+    shape.moveTo(pts[0].x, pts[0].y);
+    for (let i = 1; i <= N; i++){
+      const p = pts[i % N];
+      const prev = pts[i - 1];
+      shape.quadraticCurveTo(prev.x, prev.y, (prev.x + p.x) / 2, (prev.y + p.y) / 2);
+    }
+    const geo = new THREE.ShapeGeometry(shape, 8);
+    const mesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color: region.color, roughness:1 }));
+    mesh.rotation.x = -Math.PI/2;
+    mesh.position.set(region.cx, 0.05, region.cz);
+    mesh.userData.regionIndex = regionIndex;
+    return mesh;
+  }
+
   REGIONS.forEach((region, regionIndex) => {
-    // chão da região (também é o alvo de clique pra entrar nela)
-    const groundMat = new THREE.MeshStandardMaterial({ color: region.color, roughness:1 });
-    const ground = new THREE.Mesh(new THREE.PlaneGeometry(REGION_SIZE, REGION_SIZE), groundMat);
-    ground.rotation.x = -Math.PI/2;
-    ground.position.set(region.cx, 0, region.cz);
-    ground.userData.regionIndex = regionIndex;
+    // "país" com forma orgânica (também é o alvo de clique pra entrar nele)
+    const ground = buildIslandShape(region, regionIndex);
     planetScene.add(ground);
     regionGroundMeshes.push(ground);
-
-    // borda da região
-    const borderPts = [
-      new THREE.Vector3(-REGION_SIZE/2, 0.3, -REGION_SIZE/2),
-      new THREE.Vector3( REGION_SIZE/2, 0.3, -REGION_SIZE/2),
-      new THREE.Vector3( REGION_SIZE/2, 0.3,  REGION_SIZE/2),
-      new THREE.Vector3(-REGION_SIZE/2, 0.3,  REGION_SIZE/2),
-    ];
-    const borderGeo = new THREE.BufferGeometry().setFromPoints(borderPts);
-    const border = new THREE.LineLoop(borderGeo, new THREE.LineBasicMaterial({ color:0xffffff, transparent:true, opacity:0.25 }));
-    border.position.set(region.cx, 0, region.cz);
-    planetScene.add(border);
 
     // vulcão da região
     const volcano = buildVolcano(region.cx, region.cz);
@@ -731,15 +746,12 @@
     });
   });
 
-  // chão de fundo (entre regiões) pra não ver vazio/fundo da cena
-  const bgGroundMat = new THREE.MeshStandardMaterial({ color: 0x152a1a, roughness:1 });
-  const bgGround = new THREE.Mesh(new THREE.PlaneGeometry(REGION_SPAN*1.6, REGION_SPAN*1.6), bgGroundMat);
-  bgGround.rotation.x = -Math.PI/2;
-  bgGround.position.y = -0.2;
-  planetScene.add(bgGround);
-
-  const grid = new THREE.GridHelper(REGION_SPAN, 24, 0x3a5a44, 0x1e3d26);
-  planetScene.add(grid);
+  // oceano ao redor do continente (as 4 regiões formam um único continente cercado de mar)
+  const oceanMat = new THREE.MeshStandardMaterial({ color: 0x1a5f8a, roughness:0.35, metalness:0.15 });
+  const ocean = new THREE.Mesh(new THREE.PlaneGeometry(REGION_SPAN*2.4, REGION_SPAN*2.4), oceanMat);
+  ocean.rotation.x = -Math.PI/2;
+  ocean.position.y = -0.2;
+  planetScene.add(ocean);
 
   planetScene.add(new THREE.HemisphereLight(0xbfd8ff, 0x2a3a2a, 0.9));
   const planetSun = new THREE.DirectionalLight(0xffffff, 0.9);
