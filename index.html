@@ -1130,7 +1130,7 @@
       realtimeChannel = sb.channel('region-' + regionIndex, { config: { presence: { key: myPlayerId } } });
       realtimeChannel.on('presence', { event: 'sync' }, () => {
         const state = realtimeChannel.presenceState();
-        console.log('[VulcaniS] presence sync (jogo)', state);
+        console.log('[VulcaniS] presence sync (jogo) ' + JSON.stringify(state));
         syncOtherPlayers(state);
       });
       realtimeChannel.subscribe(async (status, err) => {
@@ -1304,7 +1304,7 @@
       previewChannel = sb.channel('region-' + regionIndex, { config: { presence: { key: 'preview_' + myPlayerId } } });
       previewChannel.on('presence', { event:'sync' }, () => {
         const state = previewChannel.presenceState();
-        console.log('[VulcaniS] presence sync (seletor)', state);
+        console.log('[VulcaniS] presence sync (seletor) ' + JSON.stringify(state));
         const byTribe = [0,0,0,0];
         Object.keys(state).forEach(key => {
           if (key.indexOf('preview_') === 0) return;
