@@ -57,11 +57,15 @@
     font-family:monospace;
   }
   #tribeSelect.on { display:flex; }
-  #tribeSelect h2 { color:#eaf6ff; margin-bottom:18px; font-size:18px; }
+  #tribeSelect h2 { color:#eaf6ff; margin-bottom:8px; font-size:18px; }
+  #tribeSelectTotal { color:#cfe8ff; font-size:12px; margin-bottom:14px; }
+  #tribeSelectTotal.full { color:#e88f8f; font-weight:bold; }
   .tribeBtn {
     width:170px; padding:14px; margin:6px; border:none; border-radius:8px;
     font-family:monospace; font-size:15px; font-weight:bold; cursor:pointer; color:#fff;
   }
+  .tribeBtn .tribeCountText { display:block; font-size:11px; font-weight:normal; opacity:0.85; margin-top:4px; }
+  .tribeBtn:disabled { opacity:0.35; cursor:not-allowed; }
   .tribeBtn.blue  { background:#2277dd; }
   .tribeBtn.red   { background:#dd2233; }
   .tribeBtn.white { background:#f2f2f2; color:#111; }
@@ -168,11 +172,12 @@
 </div>
 <div id="tribeSelect">
   <h2 id="tribeSelectTitle">Escolha sua tribo</h2>
+  <div id="tribeSelectTotal" class="hint">Total na região: 0/40</div>
   <div>
-    <button class="tribeBtn blue" data-tribe="0">Azul</button>
-    <button class="tribeBtn red" data-tribe="1">Vermelho</button>
-    <button class="tribeBtn white" data-tribe="2">Branco</button>
-    <button class="tribeBtn black" data-tribe="3">Preto</button>
+    <button class="tribeBtn blue" data-tribe="0">Azul<br><span class="tribeCountText">0/10</span></button>
+    <button class="tribeBtn red" data-tribe="1">Vermelho<br><span class="tribeCountText">0/10</span></button>
+    <button class="tribeBtn white" data-tribe="2">Branco<br><span class="tribeCountText">0/10</span></button>
+    <button class="tribeBtn black" data-tribe="3">Preto<br><span class="tribeCountText">0/10</span></button>
   </div>
   <button id="tribeCancel">Cancelar</button>
 </div>
@@ -216,9 +221,21 @@
 <div id="caveTransition"><div id="caveLight"></div></div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://unpkg.com/@supabase/supabase-js@2"></script>
 <script>
 (function(){
   "use strict";
+
+  // ---------- MULTIPLAYER (Supabase Realtime — presence por região) ----------
+  const SUPABASE_URL = 'https://soiiywujkyswklhmcaak.supabase.co';
+  const SUPABASE_KEY = 'sb_publishable_E2qrkMW4tdlqEPyhLrfFDA_ZCfbR4pa';
+  let sb = null;
+  try {
+    if (window.supabase && window.supabase.createClient) {
+      sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+    }
+  } catch (e) { console.warn('Supabase indisponível, seguindo em modo local:', e); }
+  const myPlayerId = 'p_' + Math.random().toString(36).slice(2, 10);
 
   // ---------- CONFIG ----------
   const SUN_RADIUS = 18;
@@ -322,6 +339,8 @@
   ];
   const TRIBE_COLORS = [0x2277dd, 0xdd2233, 0xf2f2f2, 0x222222];
   const TRIBE_NAMES  = ['Azul', 'Vermelho', 'Branco', 'Preto'];
+  const TRIBE_CAP = 10;               // máximo de jogadores por tribo
+  const REGION_CAP = TRIBE_CAP * 4;   // máximo de jogadores por região (40)
 
   // recursos brutos que existem no mundo e entram no inventário
   const RESOURCE_KEYS = ['graveto', 'lasca', 'corda', 'madeira', 'minerio', 'ferro', 'ouro', 'prata', 'carvao'];
@@ -917,6 +936,74 @@
     showGatherMsg('Plantado — clique de novo pra regar 💧');
   };
 
+  // ---------- MULTIPLAYER: presence por região ----------
+  function buildRemotePlayerMesh(tribeIdx){
+    const group = new THREE.Group();
+    const body = new THREE.Mesh(new THREE.CylinderGeometry(3,3,10,12), new THREE.MeshStandardMaterial({ color: TRIBE_COLORS[tribeIdx] || 0x888888 }));
+    body.position.y = 5;
+    group.add(body);
+    const head = new THREE.Mesh(new THREE.SphereGeometry(3.2,16,16), new THREE.MeshStandardMaterial({ color:0xd9a066 }));
+    head.position.y = 12;
+    group.add(head);
+    return group;
+  }
+
+  function syncOtherPlayers(presenceState){
+    if (!gameplayScene) return;
+    const seen = new Set();
+    Object.keys(presenceState).forEach(key => {
+      if (key === myPlayerId) return;
+      const entries = presenceState[key];
+      if (!entries || !entries.length) return;
+      const data = entries[entries.length - 1];
+      seen.add(key);
+      let rp = otherPlayers[key];
+      if (!rp) {
+        const mesh = buildRemotePlayerMesh(data.tribe);
+        gameplayScene.add(mesh);
+        rp = otherPlayers[key] = { mesh, tribe: data.tribe };
+      }
+      if (rp.tribe !== data.tribe) {
+        rp.mesh.children[0].material.color.setHex(TRIBE_COLORS[data.tribe] || 0x888888);
+        rp.tribe = data.tribe;
+      }
+      if (typeof data.x === 'number' && typeof data.z === 'number') {
+        rp.mesh.position.set(data.x, 0, data.z);
+      }
+    });
+    Object.keys(otherPlayers).forEach(key => {
+      if (!seen.has(key)) {
+        gameplayScene.remove(otherPlayers[key].mesh);
+        delete otherPlayers[key];
+      }
+    });
+  }
+
+  function joinRegionChannel(regionIndex){
+    if (!sb) return;
+    leaveRegionChannel();
+    try {
+      realtimeChannel = sb.channel('region-' + regionIndex, { config: { presence: { key: myPlayerId } } });
+      realtimeChannel.on('presence', { event: 'sync' }, () => {
+        syncOtherPlayers(realtimeChannel.presenceState());
+      });
+      realtimeChannel.subscribe(async (status) => {
+        if (status === 'SUBSCRIBED' && player) {
+          await realtimeChannel.track({ tribe: currentTribeIndex, x: player.position.x, z: player.position.z });
+        }
+      });
+    } catch (e) { console.warn('Falha ao entrar no canal da região:', e); }
+  }
+
+  function leaveRegionChannel(){
+    if (realtimeChannel && sb) {
+      try { sb.removeChannel(realtimeChannel); } catch (e) {}
+      realtimeChannel = null;
+    }
+    Object.values(otherPlayers).forEach(rp => { if (gameplayScene) gameplayScene.remove(rp.mesh); });
+    otherPlayers = {};
+  }
+
   // ---------- CAMERA STATE ----------
   const CAM_OFFSET_DIR = new THREE.Vector3(0, 0.55, 1).normalize(); // ângulo levemente de cima
   let zoom = 0;              // 0 = visão geral do sistema, 1 = totalmente na Terra (só usado em 'solar'/'planet')
@@ -957,6 +1044,16 @@
   let originX = 0, originZ = 0, originDir = null; // canto de spawn da tribo, pra posicionar fazenda/armazém
   let plantMenuOpen = false;
   let hudRefreshTimer = 0;
+
+  // multiplayer: canal da região atual + jogadores remotos visíveis
+  let realtimeChannel = null;
+  let otherPlayers = {}; // id -> { mesh, targetX, targetZ }
+  let presenceTimer = 0;
+  const PRESENCE_SEND_INTERVAL = 0.15; // segundos entre updates de posição
+
+  // preview de ocupação: só pra mostrar contadores na tela de escolha de tribo, sem contar como jogador
+  let previewChannel = null;
+  let previewCounts = { total:0, byTribe:[0,0,0,0] };
 
   const fadeEl = document.getElementById('fade');
   const hudEl = document.getElementById('hud');
@@ -1036,20 +1133,69 @@
 
   // ---------- SELEÇÃO DE TRIBO / ENTRAR NA REGIÃO ----------
   let selectedRegionIndex = null;
+  const tribeSelectTotalEl = document.getElementById('tribeSelectTotal');
+  const tribeBtnEls = Array.from(document.querySelectorAll('.tribeBtn'));
+
+  function updateTribeSelectCounts(counts){
+    previewCounts = counts;
+    const full = counts.total >= REGION_CAP;
+    tribeSelectTotalEl.textContent = `Total na região: ${counts.total}/${REGION_CAP}`;
+    tribeSelectTotalEl.classList.toggle('full', full);
+    tribeBtnEls.forEach((btn, i) => {
+      const n = counts.byTribe[i] || 0;
+      btn.querySelector('.tribeCountText').textContent = `${n}/${TRIBE_CAP}`;
+      btn.disabled = full || n >= TRIBE_CAP;
+    });
+  }
+
+  // canal "de vitrine": só observa quem já tá na região, não conta o próprio jogador olhando o menu
+  function openRegionPreview(regionIndex){
+    closeRegionPreview();
+    if (!sb) { updateTribeSelectCounts({ total:0, byTribe:[0,0,0,0] }); return; }
+    try {
+      previewChannel = sb.channel('region-' + regionIndex, { config: { presence: { key: 'preview_' + myPlayerId } } });
+      previewChannel.on('presence', { event:'sync' }, () => {
+        const state = previewChannel.presenceState();
+        const byTribe = [0,0,0,0];
+        Object.keys(state).forEach(key => {
+          if (key.indexOf('preview_') === 0) return;
+          const entries = state[key];
+          const data = entries && entries[entries.length-1];
+          if (data && typeof data.tribe === 'number' && data.tribe >= 0 && data.tribe < 4) byTribe[data.tribe]++;
+        });
+        updateTribeSelectCounts({ total: byTribe.reduce((a,b)=>a+b,0), byTribe });
+      });
+      previewChannel.subscribe();
+    } catch (e) { console.warn('Preview de região indisponível:', e); updateTribeSelectCounts({ total:0, byTribe:[0,0,0,0] }); }
+  }
+  function closeRegionPreview(){
+    if (previewChannel && sb) {
+      try { sb.removeChannel(previewChannel); } catch (e) {}
+      previewChannel = null;
+    }
+  }
 
   function openTribeSelect(regionIndex){
     selectedRegionIndex = regionIndex;
     uiOpen = true;
     document.getElementById('tribeSelectTitle').textContent = `Escolha sua tribo — ${REGIONS[regionIndex].name}`;
+    updateTribeSelectCounts({ total:0, byTribe:[0,0,0,0] });
     tribeSelectEl.classList.add('on');
+    openRegionPreview(regionIndex);
   }
   function closeTribeSelect(){
     uiOpen = false;
     tribeSelectEl.classList.remove('on');
+    closeRegionPreview();
   }
-  document.querySelectorAll('.tribeBtn').forEach(btn => {
+  tribeBtnEls.forEach(btn => {
     btn.addEventListener('click', () => {
+      if (btn.disabled) return;
       const tribeIdx = parseInt(btn.dataset.tribe, 10);
+      if ((previewCounts.byTribe[tribeIdx]||0) >= TRIBE_CAP || previewCounts.total >= REGION_CAP) {
+        updateTribeSelectCounts(previewCounts); // re-trava os botões na hora, sem deixar passar
+        return;
+      }
       const regionIdx = selectedRegionIndex;
       closeTribeSelect();
       enterGameplay(regionIdx, tribeIdx);
@@ -1116,6 +1262,7 @@
       minimapEl.style.display = 'block';
       updateGameHud();
       updateMinimap();
+      joinRegionChannel(regionIndex);
 
       // o ponto de luz cresce, revelando a cena — como saindo de dentro da caverna
       caveLightEl.style.transition = 'width 1.1s ease-out, height 1.1s ease-out';
@@ -1135,6 +1282,7 @@
     transitioning = true;
     fadeEl.classList.add('on');
     setTimeout(() => {
+      leaveRegionChannel();
       scene = 'planet';
       zoom = 0.6;
       gameHudEl.style.display = 'none';
@@ -1662,6 +1810,13 @@
     if (hudRefreshTimer >= 1) {
       hudRefreshTimer = 0;
       updateGameHud();
+    }
+
+    // manda a posição pros outros jogadores da região, throttled
+    presenceTimer += dt;
+    if (presenceTimer >= PRESENCE_SEND_INTERVAL && realtimeChannel) {
+      presenceTimer = 0;
+      realtimeChannel.track({ tribe: currentTribeIndex, x: player.position.x, z: player.position.z }).catch(() => {});
     }
 
     // câmera travada no personagem — sem lerp, sem lag, sem guinada. só a distância muda com o scroll.
