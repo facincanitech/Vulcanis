@@ -195,7 +195,7 @@
 </head>
 <body>
 
-<div id="versionTag">VulcaniS — protótipo v0.12</div>
+<div id="versionTag">VulcaniS — protótipo v0.13</div>
 <div id="welcomeScreen">
   <h1>Bem-vindo a Vulcanis</h1>
   <div class="hint">Um mundo de tribos, evolução e um vulcão que nunca é 100% previsível.</div>
@@ -1105,7 +1105,7 @@
       if (!rp) {
         const mesh = buildRemotePlayerMesh(row.tribe_index, row.player_name);
         gameplayScene.add(mesh);
-        rp = otherPlayers[row.player_id] = { mesh, tribe: row.tribe_index };
+        rp = otherPlayers[row.player_id] = { mesh, tribe: row.tribe_index, hp:100, weapon:null, armor:null };
       }
       if (rp.tribe !== row.tribe_index) {
         rp.mesh.children[0].material.color.setHex(TRIBE_COLORS[row.tribe_index] || 0x888888);
@@ -1119,6 +1119,19 @@
         rp.mesh.userData.nameLabel = label;
         rp.mesh.userData.name = row.player_name;
       }
+      if (row.equipped_weapon !== rp.weapon) {
+        if (rp.mesh.userData.weaponMesh) rp.mesh.remove(rp.mesh.userData.weaponMesh);
+        if (row.equipped_weapon) {
+          const wMesh = buildWeaponMesh(row.equipped_weapon);
+          wMesh.position.set(4, 0, 1);
+          wMesh.rotation.z = -0.35;
+          rp.mesh.add(wMesh);
+          rp.mesh.userData.weaponMesh = wMesh;
+        }
+        rp.weapon = row.equipped_weapon;
+      }
+      rp.armor = row.equipped_armor;
+      rp.hp = typeof row.hp === 'number' ? row.hp : rp.hp;
       rp.mesh.position.set(row.x, 0, row.z);
     });
     Object.keys(otherPlayers).forEach(id => {
@@ -1134,7 +1147,7 @@
     try {
       const cutoff = new Date(Date.now() - 20*1000).toISOString(); // só quem atualizou nos últimos 20s
       const { data, error } = await sb.from('player_sessions')
-        .select('player_id, player_name, tribe_index, x, z')
+        .select('player_id, player_name, tribe_index, x, z, hp, equipped_weapon, equipped_armor')
         .eq('region_index', regionIndex)
         .gt('last_seen', cutoff)
         .neq('player_id', myPlayerId);
@@ -1210,6 +1223,9 @@
         tribe_index: tribeIndex,
         x: x != null ? x : null,
         z: z != null ? z : null,
+        hp: currentHp,
+        equipped_weapon: itemNameFromKey(equippedWeapon),
+        equipped_armor: itemNameFromKey(equippedArmor),
         last_seen: new Date().toISOString(),
       });
     } catch (e) { console.warn('upsert player_sessions falhou:', e); }
@@ -1531,6 +1547,89 @@
   function getEquippedDef(){
     const t = toolByKey(equippedArmor);
     return t && t.def ? t.def : 0;
+  }
+  // acha um item pelo nome puro (sem prefixo de era) — usado pra calcular stats de jogadores remotos,
+  // já que o banco só guarda o nome do item equipado, não a chave completa
+  function toolByName(name){
+    if (!name) return null;
+    for (const era of ERAS) {
+      const found = era.tools.find(t => t.name === name);
+      if (found) return found;
+    }
+    return null;
+  }
+
+  // ---------- COMBATE: sem clique/mira — aproximação automática, alcance varia por tipo de arma ----------
+  const RANGED_WEAPON_REGEX = /Arco|Besta|Rifle|Fuzil|Canhão/;
+  const MELEE_RANGE = 20;
+  const RANGED_RANGE = 75;
+  const ATTACK_COOLDOWN = 1.3;
+  let attackTimer = 0;
+
+  function getAttackRange(){
+    const name = itemNameFromKey(equippedWeapon);
+    if (!name) return MELEE_RANGE;
+    return RANGED_WEAPON_REGEX.test(name) ? RANGED_RANGE : MELEE_RANGE;
+  }
+
+  function findNearestEnemy(range){
+    let best = null, bestDist = Infinity;
+    Object.keys(otherPlayers).forEach(id => {
+      const rp = otherPlayers[id];
+      if (rp.tribe === currentTribeIndex) return; // sem fogo amigo
+      if (!(rp.hp > 0)) return;
+      const d = player.position.distanceTo(rp.mesh.position);
+      if (d <= range && d < bestDist) { bestDist = d; best = { id, rp }; }
+    });
+    return best;
+  }
+
+  async function attackPlayer(id, rp){
+    const myDmg = getEquippedDmg() || 3; // desarmado ainda dá um tapa fraco
+    const theirDefTool = toolByName(rp.armor);
+    const theirDef = theirDefTool && theirDefTool.def ? theirDefTool.def : 0;
+    const dmg = Math.max(3, myDmg - theirDef);
+    const newHp = Math.max(0, (rp.hp || 100) - dmg);
+    rp.hp = newHp; // atualização otimista local, evita esperar round-trip pra sentir o golpe
+    showGatherMsg(`⚔️ Acertou ${rp.mesh.userData.name || 'inimigo'}! -${dmg} HP`);
+    if (!sb) return;
+    try {
+      await sb.from('player_sessions').update({ hp: newHp }).eq('player_id', id);
+    } catch (e) { console.warn('ataque falhou:', e); }
+  }
+
+  function updateCombat(dt){
+    attackTimer += dt;
+    if (attackTimer < ATTACK_COOLDOWN) return;
+    const target = findNearestEnemy(getAttackRange());
+    if (!target) return;
+    attackTimer = 0;
+    attackPlayer(target.id, target.rp);
+  }
+
+  // busca minha própria vida no banco — se alguém me bateu desde o último heartbeat, sincroniza pra baixo.
+  // retorna false se isso resultou em morte (pra quem chamou saber que deve parar).
+  async function syncOwnHp(){
+    if (!sb) return true;
+    try {
+      const { data, error } = await sb.from('player_sessions').select('hp').eq('player_id', myPlayerId).maybeSingle();
+      if (error) throw error;
+      if (data && typeof data.hp === 'number' && data.hp < currentHp) {
+        currentHp = Math.max(0, data.hp);
+        showGatherMsg(`💥 Você levou dano! HP: ${Math.round(currentHp)}`);
+        updateGameHud();
+        if (currentHp <= 0) {
+          handlePlayerDeath();
+          return false;
+        }
+      }
+    } catch (e) { console.warn('sync hp falhou:', e); }
+    return true;
+  }
+
+  function handlePlayerDeath(){
+    showVolcanoResult('Você morreu 💀', 'Voltando pra seleção de mapa...');
+    setTimeout(() => { exitGameplay(); }, 1400);
   }
 
   // painel pequeno sempre visível: tribo/reino, XP e vida (o resto mora no Inventário)
@@ -2031,12 +2130,18 @@
       updateGameHud();
     }
 
+    // combate: aproximação automática, sem clique — checa inimigos no alcance a cada cooldown
+    updateCombat(dt);
+
     // heartbeat no banco: manda minha posição e busca a dos outros — com lag (poucos segundos), mas estável
     dbHeartbeatTimer += dt;
     if (dbHeartbeatTimer >= DB_HEARTBEAT_INTERVAL) {
       dbHeartbeatTimer = 0;
-      upsertPlayerSession(currentRegionIndex, currentTribeIndex, player.position.x, player.position.z);
-      fetchOtherPlayersInRegion(currentRegionIndex);
+      syncOwnHp().then(alive => {
+        if (!alive || scene !== 'gameplay') return; // morreu ou já saiu — não reescreve estado velho
+        upsertPlayerSession(currentRegionIndex, currentTribeIndex, player.position.x, player.position.z);
+        fetchOtherPlayersInRegion(currentRegionIndex);
+      });
     }
 
     // câmera travada no personagem — sem lerp, sem lag, sem guinada. só a distância muda com o scroll.
