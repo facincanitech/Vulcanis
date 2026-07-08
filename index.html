@@ -195,7 +195,7 @@
 </head>
 <body>
 
-<div id="versionTag">VulcaniS — protótipo v0.7</div>
+<div id="versionTag">VulcaniS — protótipo v0.8</div>
 <div id="welcomeScreen">
   <h1>Bem-vindo a Vulcanis</h1>
   <div class="hint">Um mundo de tribos, evolução e um vulcão que nunca é 100% previsível.</div>
@@ -701,26 +701,10 @@
 
   REGIONS.forEach((region, regionIndex) => {
     // o vulcão já tá desenhado na imagem — aqui só o nome flutuando em cima dele
+    // (marcadores de cor das tribos ficam escondidos nessa tela — só aparecem dentro da região)
     const label = makeTextSprite(region.name, { fontSize:40 });
     label.position.set(region.cx, 40, region.cz);
     planetScene.add(label);
-
-    // 4 tribos nos cantos da região — mesmo layout usado dentro da região jogável
-    TRIBE_CORNER_DIRS.forEach((dir, i) => {
-      const tx = region.cx + dir.x*TRIBE_RADIUS;
-      const tz = region.cz + dir.z*TRIBE_RADIUS;
-
-      const marker = new THREE.Mesh(
-        new THREE.CylinderGeometry(4,4,3,16),
-        new THREE.MeshStandardMaterial({ color: TRIBE_COLORS[i] })
-      );
-      marker.position.set(tx, 1.5, tz);
-      planetScene.add(marker);
-
-      const tribeLabel = makeTextSprite(TRIBE_NAMES[i], { fontSize:26, scale:0.7 });
-      tribeLabel.position.set(tx, 10, tz);
-      planetScene.add(tribeLabel);
-    });
   });
 
   planetScene.add(new THREE.HemisphereLight(0xbfd8ff, 0x2a3a2a, 0.9));
