@@ -274,7 +274,7 @@
 </head>
 <body>
 
-<div id="versionTag">VulcaniS — protótipo v0.35</div>
+<div id="versionTag">VulcaniS — protótipo v0.36</div>
 <div id="welcomeScreen">
   <h1>Bem-vindo a Vulcanis</h1>
   <div class="hint">Um mundo de tribos, evolução e um vulcão que nunca é 100% previsível.</div>
@@ -1786,7 +1786,12 @@
         .gt('last_seen', cutoff)
         .neq('player_id', myPlayerId);
       if (error) throw error;
-      applyOtherPlayersFromRows(data || []);
+      const rows = data || [];
+      console.log(
+        `[Vulcanis] outros jogadores na região ${regionIndex}: ${rows.length}`,
+        rows.map(r => ({ id: r.player_id, nome: r.player_name, tribo: r.tribe_index, x: Math.round(r.x), z: Math.round(r.z), hp: r.hp }))
+      );
+      applyOtherPlayersFromRows(rows);
     } catch (e) { console.warn('fetch other players falhou:', e); }
   }
 
@@ -1891,6 +1896,7 @@
         killed_by: null,
         last_seen: new Date().toISOString(),
       });
+      console.log(`[Vulcanis] eu (${myPlayerId}) enviei posição: região ${regionIndex}, tribo ${tribeIndex}, x=${Math.round(x)}, z=${Math.round(z)}`);
     } catch (e) { console.warn('upsert player_sessions falhou:', e); }
   }
 
