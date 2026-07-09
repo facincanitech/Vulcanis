@@ -274,7 +274,7 @@
 </head>
 <body>
 
-<div id="versionTag">VulcaniS — protótipo v0.41</div>
+<div id="versionTag">VulcaniS — protótipo v0.42</div>
 <div id="welcomeScreen">
   <h1>Bem-vindo a Vulcanis</h1>
   <div class="hint">Um mundo de tribos, evolução e um vulcão que nunca é 100% previsível.</div>
@@ -2023,6 +2023,23 @@
     } catch (e) { console.warn('criar estado do vulcão falhou:', e); }
   }
 
+  // sem ninguém hospedando (região vazia), o relógio do vulcão fica parado — updated_at só é tocado
+  // pelo host a cada tick (ver tickVolcanoAsHost). Se faz tempo que ninguém tocou, a região ficou vazia:
+  // reseta tudo pro estado calmo em vez de deixar o tempo "correr escondido" enquanto não tinha ninguém
+  const VOLCANO_EMPTY_RESET_MS = 90*1000;
+  async function resetVolcanoIfWasEmpty(regionIndex){
+    if (!sb) return;
+    try {
+      const { data, error } = await sb.from('region_volcano').select('updated_at').eq('region_index', regionIndex).maybeSingle();
+      if (error) throw error;
+      if (!data || Date.now() - new Date(data.updated_at).getTime() < VOLCANO_EMPTY_RESET_MS) return;
+      const nowIso = new Date().toISOString();
+      await sb.from('region_volcano').update({
+        state: 'calm', last_fed_at: nowIso, state_since: nowIso, simulation_started_at: nowIso, last_kill_at: null, updated_at: nowIso,
+      }).eq('region_index', regionIndex);
+    } catch (e) { console.warn('resetar vulcão vazio falhou:', e); }
+  }
+
   async function fetchVolcanoState(regionIndex){
     if (!sb) return;
     try {
@@ -2166,6 +2183,11 @@
   async function tickVolcanoAsHost(){
     if (!sb || !volcanoState) return;
     const now = Date.now();
+
+    // toca "alguém tá cuidando do vulcão agora", independente de mudar de estado ou não — é o sinal que
+    // resetVolcanoIfWasEmpty usa pra saber se a região ficou vazia por um tempo
+    try { await sb.from('region_volcano').update({ updated_at: new Date().toISOString() }).eq('region_index', currentRegionIndex); }
+    catch (e) { console.warn('touch região_volcano falhou:', e); }
 
     if (volcanoState.state === 'escarnio') {
       if (now - volcanoState.stateSince >= ESCARNIO_DURATION_MS) await runEscarnioFinalKill();
@@ -2600,8 +2622,9 @@
       fetchOtherPlayersInRegion(regionIndex);
       fetchRegionStructures(regionIndex);
       ensureBotsSpawned(regionIndex, tribeIndex);
-      ensureVolcanoStateExists(regionIndex);
-      fetchVolcanoState(regionIndex);
+      ensureVolcanoStateExists(regionIndex)
+        .then(() => resetVolcanoIfWasEmpty(regionIndex))
+        .then(() => fetchVolcanoState(regionIndex));
       fetchTribePoints(regionIndex);
 
       // o ponto de luz cresce, revelando a cena — como saindo de dentro da caverna
