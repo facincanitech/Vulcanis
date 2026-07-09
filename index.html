@@ -274,7 +274,7 @@
 </head>
 <body>
 
-<div id="versionTag">VulcaniS — protótipo v0.34</div>
+<div id="versionTag">VulcaniS — protótipo v0.35</div>
 <div id="welcomeScreen">
   <h1>Bem-vindo a Vulcanis</h1>
   <div class="hint">Um mundo de tribos, evolução e um vulcão que nunca é 100% previsível.</div>
@@ -1521,12 +1521,29 @@
     setTimeout(() => volcanoFlashEl.classList.remove('on'), 900);
   }
 
-  function showVolcanoResult(big, small){
+  let volcanoMsgText = '';
+  let volcanoMsgExpiresAt = 0;
+
+  function showVolcanoResult(big, small, persistInHud = true){
     volcanoResultMsgEl.querySelector('.big').textContent = big;
     volcanoResultMsgEl.querySelector('.small').textContent = small;
     volcanoResultMsgEl.style.display = 'block';
     clearTimeout(volcanoResultMsgEl._t);
     volcanoResultMsgEl._t = setTimeout(() => { volcanoResultMsgEl.style.display = 'none'; }, 3200);
+    if (persistInHud) {
+      volcanoMsgText = small ? `${big} — ${small}` : big;
+      volcanoMsgExpiresAt = Date.now() + 3200;
+      updateGameHud();
+    }
+  }
+
+  // linha extra no HUD pequeno, logo abaixo da Comida — ecoa a última mensagem do vulcão com contador
+  // regressivo enquanto ela ainda vale (mesma duração do popup grande no centro da tela)
+  function volcanoMsgHudHtml(){
+    const remainingMs = volcanoMsgExpiresAt - Date.now();
+    if (remainingMs <= 0) return '';
+    const remainingSec = Math.ceil(remainingMs / 1000);
+    return `<div style="margin-top:5px; opacity:.85; font-size:11px;">🌋 ${volcanoMsgText} (${remainingSec}s)</div>`;
   }
 
   window.__vulcanisOfferResource = function(key){
@@ -2518,6 +2535,8 @@
       plantMenuOpen = false;
       plantMenuTargetSlot = null;
       warehouseMenuOpen = false;
+      volcanoMsgText = '';
+      volcanoMsgExpiresAt = 0;
       hudRefreshTimer = 0;
       activeEraTab = 0;
       craftActiveTab = 0;
@@ -2751,10 +2770,10 @@
 
   function handlePlayerDeath(killedByVolcano){
     if (killedByVolcano) {
-      showVolcanoResult('O vulcão te matou 🌋💀', 'Tudo que você construiu virou cinzas. Voltando pra seleção de mapa...');
+      showVolcanoResult('O vulcão te matou 🌋💀', 'Tudo que você construiu virou cinzas. Voltando pra seleção de mapa...', false);
       destroyOwnStructuresOnDeath();
     } else {
-      showVolcanoResult('Você morreu 💀', 'Voltando pra seleção de mapa...');
+      showVolcanoResult('Você morreu 💀', 'Voltando pra seleção de mapa...', false);
     }
     setTimeout(() => { exitGameplay(); }, 1400);
   }
@@ -2774,6 +2793,7 @@
       🍗 Fome: ${Math.round(hunger)}/${MAX_HUNGER}
       <div class="hpBarOuter"><div class="hungerBarInner" style="width:${hungerPct}%"></div></div>
       🎒 Comida: ${foodCarried}/${FOOD_CARRY_MAX}
+      ${volcanoMsgHudHtml()}
     `;
     if (openScreen === 'skill') updateSkillScreen();
     if (openScreen === 'inv') updateInvScreen();
