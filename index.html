@@ -274,7 +274,7 @@
 </head>
 <body>
 
-<div id="versionTag">VulcaniS — protótipo v0.43</div>
+<div id="versionTag">VulcaniS — protótipo v0.44</div>
 <div id="welcomeScreen">
   <h1>Bem-vindo a Vulcanis</h1>
   <div class="hint">Um mundo de tribos, evolução e um vulcão que nunca é 100% previsível.</div>
@@ -2757,6 +2757,24 @@
     return best;
   }
 
+  // rastro de bala/flecha — só visual, o dano já foi resolvido na hora (sem física de projétil de verdade)
+  function spawnBulletTracer(fromPos, toPos){
+    if (!gameplayScene) return;
+    const dir = new THREE.Vector3().subVectors(toPos, fromPos);
+    const dist = dir.length();
+    if (dist < 0.01) return;
+    dir.normalize();
+    const mesh = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.2, 0.2, dist, 6),
+      new THREE.MeshBasicMaterial({ color:0xfff2a0, transparent:true, opacity:0.85, depthWrite:false })
+    );
+    mesh.position.copy(fromPos).add(toPos).multiplyScalar(0.5);
+    mesh.position.y = 6; // altura aproximada do peito, mesmo eixo do mesh de arma
+    mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0), dir);
+    gameplayScene.add(mesh);
+    setTimeout(() => { if (gameplayScene) gameplayScene.remove(mesh); }, 130);
+  }
+
   async function attackPlayer(id, rp){
     const myWeaponName = itemNameFromKey(equippedWeapon);
     const myDmg = getEquippedDmg() || 3; // desarmado ainda dá um tapa fraco
@@ -2766,6 +2784,7 @@
 
     const isRanged = myWeaponName && RANGED_WEAPON_REGEX.test(myWeaponName);
     if (isRanged) {
+      spawnBulletTracer(player.position, rp.mesh.position);
       const shelter = shelterTierAt(rp.mesh.position.x, rp.mesh.position.z);
       if (shelter === 'barricade_moderna') {
         if (myWeaponName && EXPLOSIVE_WEAPON_REGEX.test(myWeaponName)) {
