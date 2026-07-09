@@ -274,7 +274,7 @@
 </head>
 <body>
 
-<div id="versionTag">VulcaniS — protótipo v0.36</div>
+<div id="versionTag">VulcaniS — protótipo v0.37</div>
 <div id="welcomeScreen">
   <h1>Bem-vindo a Vulcanis</h1>
   <div class="hint">Um mundo de tribos, evolução e um vulcão que nunca é 100% previsível.</div>
@@ -1787,10 +1787,8 @@
         .neq('player_id', myPlayerId);
       if (error) throw error;
       const rows = data || [];
-      console.log(
-        `[Vulcanis] outros jogadores na região ${regionIndex}: ${rows.length}`,
-        rows.map(r => ({ id: r.player_id, nome: r.player_name, tribo: r.tribe_index, x: Math.round(r.x), z: Math.round(r.z), hp: r.hp }))
-      );
+      const summary = rows.map(r => `${r.player_id}(${r.player_name}) tribo${r.tribe_index} x${Math.round(r.x)} z${Math.round(r.z)} hp${r.hp}`).join(' | ');
+      console.log(`[Vulcanis] outros jogadores na região ${regionIndex}: ${rows.length} :: ${summary}`);
       applyOtherPlayersFromRows(rows);
     } catch (e) { console.warn('fetch other players falhou:', e); }
   }
