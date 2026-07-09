@@ -274,7 +274,7 @@
 </head>
 <body>
 
-<div id="versionTag">VulcaniS — protótipo v0.39</div>
+<div id="versionTag">VulcaniS — protótipo v0.40</div>
 <div id="welcomeScreen">
   <h1>Bem-vindo a Vulcanis</h1>
   <div class="hint">Um mundo de tribos, evolução e um vulcão que nunca é 100% previsível.</div>
@@ -1785,11 +1785,12 @@
   async function fetchOtherPlayersInRegion(regionIndex){
     if (!sb || !gameplayScene) return;
     try {
-      const cutoff = new Date(Date.now() - 20*1000).toISOString(); // só quem atualizou nos últimos 20s
-      const { data, error } = await sb.from('player_sessions')
+      // "ativo" calculado pelo relógio do banco (view active_player_sessions), não pelo relógio de quem
+      // consulta — evita assimetria se o relógio de algum dispositivo estiver desincronizado
+      const { data, error } = await sb.from('active_player_sessions')
         .select('player_id, player_name, tribe_index, x, z, hp, equipped_weapon, equipped_armor, vote_for')
         .eq('region_index', regionIndex)
-        .gt('last_seen', cutoff)
+        .eq('is_active', true)
         .neq('player_id', myPlayerId);
       if (error) throw error;
       const rows = data || [];
