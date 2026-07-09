@@ -274,7 +274,7 @@
 </head>
 <body>
 
-<div id="versionTag">VulcaniS — protótipo v0.37</div>
+<div id="versionTag">VulcaniS — protótipo v0.38</div>
 <div id="welcomeScreen">
   <h1>Bem-vindo a Vulcanis</h1>
   <div class="hint">Um mundo de tribos, evolução e um vulcão que nunca é 100% previsível.</div>
@@ -384,7 +384,13 @@
       sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
     }
   } catch (e) { console.warn('Supabase indisponível, seguindo em modo local:', e); }
-  const myPlayerId = 'p_' + Math.random().toString(36).slice(2, 10);
+  // fica salvo no navegador — sem isso, cada F5 virava uma "pessoa nova" pro banco, deixando linha
+  // fantasma pra trás e bagunçando quem é quem entre os jogadores
+  let myPlayerId = localStorage.getItem('vulcanis_id');
+  if (!myPlayerId) {
+    myPlayerId = 'p_' + Math.random().toString(36).slice(2, 10);
+    localStorage.setItem('vulcanis_id', myPlayerId);
+  }
   let playerName = localStorage.getItem('vulcanis_name') || '';
 
   // ---------- CONFIG ----------
