@@ -274,7 +274,7 @@
 </head>
 <body>
 
-<div id="versionTag">VulcaniS — protótipo v0.42</div>
+<div id="versionTag">VulcaniS — protótipo v0.43</div>
 <div id="welcomeScreen">
   <h1>Bem-vindo a Vulcanis</h1>
   <div class="hint">Um mundo de tribos, evolução e um vulcão que nunca é 100% previsível.</div>
@@ -1807,7 +1807,10 @@
   // desliza a posição visual dos outros jogadores em direção ao último alvo recebido, a cada frame —
   // sem isso, cada busca nova (a cada poucos segundos) fazia o boneco "teleportar" de repente
   function updateOtherPlayersInterpolation(dt){
-    const t = Math.min(1, dt * 6);
+    // mais lento de propósito — se terminasse de deslizar rápido demais, ficaria parado esperando a
+    // próxima atualização (2.5-3s), parecendo "anda rápido, para, anda rápido". Assim desliza continuamente
+    // até quase alcançar o alvo bem perto da hora da próxima atualização chegar.
+    const t = Math.min(1, dt * 1.1);
     Object.values(otherPlayers).forEach(rp => {
       if (rp.targetX == null) return;
       rp.mesh.position.x += (rp.targetX - rp.mesh.position.x) * t;
