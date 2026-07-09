@@ -274,7 +274,7 @@
 </head>
 <body>
 
-<div id="versionTag">VulcaniS — protótipo v0.31</div>
+<div id="versionTag">VulcaniS — protótipo v0.32</div>
 <div id="welcomeScreen">
   <h1>Bem-vindo a Vulcanis</h1>
   <div class="hint">Um mundo de tribos, evolução e um vulcão que nunca é 100% previsível.</div>
@@ -754,13 +754,7 @@
     banner.rotation.y = Math.PI/6;
     group.add(banner);
 
-    if (name) {
-      const label = makeTextSprite(name, { fontSize:30, scale:0.5 });
-      label.position.y = 21.5;
-      group.add(label);
-      group.userData.nameLabel = label;
-      group.userData.name = name;
-    }
+    group.userData.name = name || '';
     group.userData.clothMat = clothMat;
     group.userData.darkClothMat = darkClothMat;
     group.userData.bannerMat = bannerMat;
@@ -1678,14 +1672,8 @@
         setPlayerMeshTribe(rp.mesh, row.tribe_index);
         rp.tribe = row.tribe_index;
       }
-      if (row.player_name && mesh_name_changed(rp.mesh, row.player_name)) {
-        rp.mesh.remove(rp.mesh.userData.nameLabel);
-        const label = makeTextSprite(row.player_name, { fontSize:30, scale:0.5 });
-        label.position.y = 21.5;
-        rp.mesh.add(label);
-        rp.mesh.userData.nameLabel = label;
-        rp.mesh.userData.name = row.player_name;
-      }
+      rp.mesh.userData.name = row.player_name || rp.mesh.userData.name;
+      updateMeshLabel(rp.mesh, row.player_id, row.tribe_index, rp.mesh.userData.name);
       if (row.equipped_weapon !== rp.weapon) {
         if (rp.mesh.userData.weaponMesh) rp.mesh.remove(rp.mesh.userData.weaponMesh);
         if (row.equipped_weapon) {
@@ -1716,10 +1704,6 @@
       if (!seen.has(id)) { gameplayScene.remove(otherPlayers[id].mesh); delete otherPlayers[id]; }
     });
   }
-  function mesh_name_changed(mesh, name){
-    return mesh.userData.name !== name;
-  }
-
   async function fetchOtherPlayersInRegion(regionIndex){
     if (!sb || !gameplayScene) return;
     try {
@@ -1858,14 +1842,54 @@
     return mates;
   }
 
-  function currentTribeLeaderId(){
+  // versão genérica por tribo (não só a minha) — usada pra saber quem é o líder de QUALQUER tribo, pra
+  // poder mostrar a coroa em cima de quem for líder mesmo que seja de outra tribo
+  function membersOfTribe(tribeIdx){
+    const mates = [];
+    if (tribeIdx === currentTribeIndex) mates.push({ id: myPlayerId, voteFor: myVote });
+    Object.entries(otherPlayers).forEach(([id, rp]) => {
+      if (id.startsWith(BOT_ID_PREFIX) || rp.tribe !== tribeIdx) return;
+      mates.push({ id, voteFor: rp.voteFor || null });
+    });
+    return mates;
+  }
+
+  function leaderIdForTribe(tribeIdx){
     const tally = {};
-    tribemateEntries().forEach(m => { if (m.voteFor) tally[m.voteFor] = (tally[m.voteFor]||0) + 1; });
+    membersOfTribe(tribeIdx).forEach(m => { if (m.voteFor) tally[m.voteFor] = (tally[m.voteFor]||0) + 1; });
     let leader = null, best = 0;
     Object.entries(tally).forEach(([id, count]) => {
       if (count > best || (count === best && leader && id < leader)) { best = count; leader = id; }
     });
     return best > 0 ? leader : null;
+  }
+
+  function currentTribeLeaderId(){
+    return leaderIdForTribe(currentTribeIndex);
+  }
+
+  // rótulo em cima da cabeça = coroa (se for líder da própria tribo) + nome — pro jogador local não mostra
+  // nome (nunca mostrou), só a coroa quando ele mesmo é o líder
+  function updateMeshLabel(mesh, id, tribeIdx, baseName){
+    const isLeader = leaderIdForTribe(tribeIdx) === id;
+    const text = (isLeader ? '👑 ' : '') + (baseName || '');
+    if (mesh.userData.labelText === text) return;
+    if (mesh.userData.nameLabel) { mesh.remove(mesh.userData.nameLabel); mesh.userData.nameLabel = null; }
+    mesh.userData.labelText = text;
+    if (!text) return;
+    const label = makeTextSprite(text, { fontSize:30, scale:0.5 });
+    label.position.y = 21.5;
+    mesh.add(label);
+    mesh.userData.nameLabel = label;
+  }
+
+  // roda 1x/seg pra pegar mudança de liderança mesmo sem o nome ter mudado (voto pode trocar a qualquer hora)
+  function updateAllLeaderCrowns(){
+    if (player && scene === 'gameplay') updateMeshLabel(player, myPlayerId, currentTribeIndex, '');
+    Object.entries(otherPlayers).forEach(([id, rp]) => {
+      if (id.startsWith(BOT_ID_PREFIX)) return;
+      updateMeshLabel(rp.mesh, id, rp.tribe, rp.mesh.userData.name);
+    });
   }
 
   window.__vulcanisCastVote = async function(targetId){
@@ -3383,6 +3407,7 @@
       hudRefreshTimer = 0;
       updateGameHud();
       updateRoundCountdownDisplay();
+      updateAllLeaderCrowns();
     }
 
     // combate: aproximação automática, sem clique — checa inimigos no alcance a cada cooldown
