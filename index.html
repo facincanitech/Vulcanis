@@ -274,7 +274,7 @@
 </head>
 <body>
 
-<div id="versionTag">VulcaniS — protótipo v0.33</div>
+<div id="versionTag">VulcaniS — protótipo v0.34</div>
 <div id="welcomeScreen">
   <h1>Bem-vindo a Vulcanis</h1>
   <div class="hint">Um mundo de tribos, evolução e um vulcão que nunca é 100% previsível.</div>
@@ -346,6 +346,14 @@
     <h2 id="plantMenuTitle">Fazenda</h2>
     <div id="plantMenuBody" class="skillGrid"></div>
     <button class="screenCloseBtn" onclick="window.__vulcanisClosePlantMenu()">Cancelar</button>
+  </div>
+</div>
+<div id="warehouseMenu" class="screenOverlay">
+  <div class="screenPanel" style="width:380px;text-align:center;">
+    <h2>Armazém</h2>
+    <div class="hint">Clique num item pra pegar 1 (até o limite da mochila). Guarde o que estiver carregando quando quiser.</div>
+    <div id="warehouseMenuBody"></div>
+    <button class="screenCloseBtn" onclick="window.__vulcanisCloseWarehouseMenu()">Fechar (ESC)</button>
   </div>
 </div>
 <div id="offerScreen" class="screenOverlay">
@@ -1374,28 +1382,72 @@
   }
 
   function handleWarehouseInteract(){
+    if (!warehouse) return;
     if (player.position.distanceTo(warehouse.mesh.position) > INTERACT_RANGE) {
       showGatherMsg('Chegue mais perto do armazém');
       return;
     }
-    const carried = foodTotal(foodInventory);
-    if (carried > 0) {
-      Object.keys(foodInventory).forEach(k => {
-        warehouseStock[k] = (warehouseStock[k]||0) + foodInventory[k];
-        foodInventory[k] = 0;
-      });
-      showGatherMsg('Comida depositada no armazém 📦');
-    } else {
-      let room = FOOD_CARRY_MAX;
-      for (const k of Object.keys(warehouseStock)) {
-        if (room <= 0) break;
-        const take = Math.min(warehouseStock[k]||0, room);
-        if (take > 0) { foodInventory[k] = (foodInventory[k]||0) + take; warehouseStock[k] -= take; room -= take; }
-      }
-      showGatherMsg(room === FOOD_CARRY_MAX ? 'Armazém sem comida' : 'Comida retirada do armazém 🍽️');
-    }
-    updateGameHud();
+    openWarehouseMenu();
   }
+
+  function openWarehouseMenu(){
+    if (!warehouse) return;
+    warehouseMenuOpen = true;
+    warehouseMenuEl.classList.add('on');
+    renderWarehouseMenu();
+  }
+  window.__vulcanisCloseWarehouseMenu = function(){
+    warehouseMenuOpen = false;
+    warehouseMenuEl.classList.remove('on');
+  };
+
+  function renderWarehouseMenu(){
+    const stockEntries = Object.entries(warehouseStock).filter(([,v]) => v > 0);
+    const stockHtml = stockEntries.length
+      ? stockEntries.map(([k, v]) => {
+          const item = FARMER_ITEMS.find(i => i.key === k);
+          const icon = item ? item.icon : '🍽️';
+          const label = item ? item.label : k;
+          return `<div class="slotRow">
+            <span class="slotIcon">${icon}</span>
+            <div style="flex:1">${label}</div>
+            <div style="opacity:.7">x${v}</div>
+            <button onclick="window.__vulcanisTakeFromWarehouse('${k}')">Pegar 1</button>
+          </div>`;
+        }).join('')
+      : `<div class="era-locked">Armazém vazio</div>`;
+
+    const carried = foodTotal(foodInventory);
+    const depositHtml = carried > 0
+      ? `<button onclick="window.__vulcanisDepositToWarehouse()">Guardar tudo que carrego (${carried})</button>`
+      : `<div class="era-locked">Você não está carregando comida pra guardar</div>`;
+
+    warehouseMenuBodyEl.innerHTML = `<div class="craftList">${stockHtml}</div><div style="margin-top:14px;text-align:center">${depositHtml}</div>`;
+  }
+
+  window.__vulcanisTakeFromWarehouse = function(cropKey){
+    if (!(warehouseStock[cropKey] > 0)) return;
+    if (foodTotal(foodInventory) >= FOOD_CARRY_MAX) {
+      showGatherMsg(`Mochila de comida cheia (máx ${FOOD_CARRY_MAX})`);
+      return;
+    }
+    warehouseStock[cropKey]--;
+    foodInventory[cropKey] = (foodInventory[cropKey] || 0) + 1;
+    renderWarehouseMenu();
+    updateGameHud();
+  };
+
+  window.__vulcanisDepositToWarehouse = function(){
+    Object.keys(foodInventory).forEach(k => {
+      if (foodInventory[k] > 0) {
+        warehouseStock[k] = (warehouseStock[k] || 0) + foodInventory[k];
+        foodInventory[k] = 0;
+      }
+    });
+    showGatherMsg('Comida guardada no armazém 📦');
+    renderWarehouseMenu();
+    updateGameHud();
+  };
 
   // ---------- VULCÃO: oferendas ----------
   // quanto o vulcão "gosta" de cada item, por unidade — arma de fogo/explosivo ele ama, pedra crua ele
@@ -1417,6 +1469,9 @@
   const volcanoResultMsgEl = document.getElementById('volcanoResultMsg');
   let offerMenuOpen = false;
   let volcanoOfferCooldown = 0; // segundos restantes até o vulcão aceitar outra oferenda
+  const warehouseMenuEl = document.getElementById('warehouseMenu');
+  const warehouseMenuBodyEl = document.getElementById('warehouseMenuBody');
+  let warehouseMenuOpen = false;
 
   function handleVolcanoInteract(){
     if (player.position.distanceTo(gameplayVolcano.position) > INTERACT_RANGE + 25) {
@@ -2462,6 +2517,7 @@
       interactables = [{ mesh: gameplayVolcano, type:'volcano' }];
       plantMenuOpen = false;
       plantMenuTargetSlot = null;
+      warehouseMenuOpen = false;
       hudRefreshTimer = 0;
       activeEraTab = 0;
       craftActiveTab = 0;
@@ -3125,7 +3181,7 @@
   });
 
   renderer.domElement.addEventListener('mousedown', (e) => {
-    if (transitioning || uiOpen || openScreen || plantMenuOpen || offerMenuOpen || scene !== 'gameplay') return;
+    if (transitioning || uiOpen || openScreen || plantMenuOpen || offerMenuOpen || warehouseMenuOpen || scene !== 'gameplay') return;
     const obj = findNearestInteractable();
     if (obj && obj.type === 'farm') handleFarmInteract();
     else if (obj && obj.type === 'warehouse') handleWarehouseInteract();
@@ -3140,7 +3196,7 @@
       if (point) openTribeSelect(nearestRegionIndex(point.x, point.z));
       return;
     }
-    if (scene === 'gameplay' && !openScreen && !plantMenuOpen && !offerMenuOpen) {
+    if (scene === 'gameplay' && !openScreen && !plantMenuOpen && !offerMenuOpen && !warehouseMenuOpen) {
       const obj = findNearestInteractable();
       if (obj && obj.type === 'farm') handleFarmInteract();
       else if (obj && obj.type === 'warehouse') handleWarehouseInteract();
@@ -3188,7 +3244,7 @@
     if (!touchState) return;
     const t = Array.from(e.changedTouches).find(tt => tt.identifier === touchState.id);
     if (!t) return;
-    const canMove = scene === 'gameplay' && !openScreen && !plantMenuOpen && !offerMenuOpen;
+    const canMove = scene === 'gameplay' && !openScreen && !plantMenuOpen && !offerMenuOpen && !warehouseMenuOpen;
     if (!canMove) return;
     const dist = Math.hypot(t.clientX - touchState.startX, t.clientY - touchState.startY);
     if (!touchState.dragging && dist > JOYSTICK_DEADZONE) {
@@ -3226,6 +3282,7 @@
     if (k === 'escape') {
       if (plantMenuOpen) window.__vulcanisClosePlantMenu();
       else if (offerMenuOpen) window.__vulcanisCloseOfferMenu();
+      else if (warehouseMenuOpen) window.__vulcanisCloseWarehouseMenu();
       else if (openScreen) window.__vulcanisCloseScreens();
       else exitGameplay();
     } else if (k === 'n') {
@@ -3302,7 +3359,7 @@
 
   function updateGameplay(dt){
     let dx = 0, dz = 0;
-    if (!openScreen && !plantMenuOpen && !offerMenuOpen) {
+    if (!openScreen && !plantMenuOpen && !offerMenuOpen && !warehouseMenuOpen) {
       if (keys['w'] || keys['arrowup'])    dz -= 1;
       if (keys['s'] || keys['arrowdown'])  dz += 1;
       if (keys['a'] || keys['arrowleft'])  dx -= 1;
@@ -3339,10 +3396,10 @@
       player.position.y = player.userData.bodyY;
     }
 
-    if (!openScreen && !plantMenuOpen && !offerMenuOpen) updateAutoGather(dt, isMoving);
+    if (!openScreen && !plantMenuOpen && !offerMenuOpen && !warehouseMenuOpen) updateAutoGather(dt, isMoving);
     if (volcanoOfferCooldown > 0) volcanoOfferCooldown = Math.max(0, volcanoOfferCooldown - dt);
 
-    if (gatherState && !openScreen && !plantMenuOpen && !offerMenuOpen) {
+    if (gatherState && !openScreen && !plantMenuOpen && !offerMenuOpen && !warehouseMenuOpen) {
       const { node } = gatherState;
       if (!resourceNodes.includes(node) || player.position.distanceTo(node.mesh.position) > GATHER_RANGE) {
         cancelGather();
