@@ -274,7 +274,7 @@
 </head>
 <body>
 
-<div id="versionTag">VulcaniS — protótipo v0.38</div>
+<div id="versionTag">VulcaniS — protótipo v0.39</div>
 <div id="welcomeScreen">
   <h1>Bem-vindo a Vulcanis</h1>
   <div class="hint">Um mundo de tribos, evolução e um vulcão que nunca é 100% previsível.</div>
@@ -375,7 +375,7 @@
 (function(){
   "use strict";
 
-  // ---------- MULTIPLAYER (Supabase Realtime — presence por região) ----------
+  // ---------- MULTIPLAYER (polling na tabela player_sessions — sem WebSocket/Presence/canal) ----------
   const SUPABASE_URL = 'https://soiiywujkyswklhmcaak.supabase.co';
   const SUPABASE_KEY = 'sb_publishable_E2qrkMW4tdlqEPyhLrfFDA_ZCfbR4pa';
   let sb = null;
