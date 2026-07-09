@@ -274,7 +274,7 @@
 </head>
 <body>
 
-<div id="versionTag">VulcaniS — protótipo v0.45</div>
+<div id="versionTag">VulcaniS — protótipo v0.46</div>
 <div id="welcomeScreen">
   <h1>Bem-vindo a Vulcanis</h1>
   <div class="hint">Um mundo de tribos, evolução e um vulcão que nunca é 100% previsível.</div>
@@ -2037,6 +2037,8 @@
       }).eq('region_index', regionIndex);
       await sb.from('region_tribe_points').delete().eq('region_index', regionIndex);
       await sb.from('region_structures').delete().eq('region_index', regionIndex);
+      // bots não têm dono pra limpar a própria linha — apaga direto, renascem sozinhos na próxima entrada
+      await sb.from('player_sessions').delete().like('player_id', `${BOT_ID_PREFIX}r${regionIndex}_%`);
     } catch (e) { console.warn('resetar rodada da região falhou:', e); }
   }
 
@@ -2279,6 +2281,10 @@
     }));
     try {
       await sb.from('player_sessions').upsert(rows, { onConflict: 'player_id', ignoreDuplicates: true });
+      // "revive" bot que já existia mas ficou tempo demais sem host (last_seen velho) — sem tocar hp/posição,
+      // só o carimbo de presença. Sem isso, um bot inativo há muito tempo nunca mais aparece nas buscas (fica
+      // invisível pra sempre, porque só reaparece pra quem já sabe que ele existe, e ninguém mais sabe)
+      await sb.from('player_sessions').update({ last_seen: new Date().toISOString() }).in('player_id', rows.map(r => r.player_id));
     } catch (e) { console.warn('spawn bots falhou:', e); }
   }
 
