@@ -274,7 +274,7 @@
 </head>
 <body>
 
-<div id="versionTag">VulcaniS — protótipo v0.40</div>
+<div id="versionTag">VulcaniS — protótipo v0.41</div>
 <div id="welcomeScreen">
   <h1>Bem-vindo a Vulcanis</h1>
   <div class="hint">Um mundo de tribos, evolução e um vulcão que nunca é 100% previsível.</div>
@@ -1743,8 +1743,9 @@
       let rp = otherPlayers[row.player_id];
       if (!rp) {
         const mesh = buildRemotePlayerMesh(row.tribe_index, row.player_name);
+        mesh.position.set(row.x, 0, row.z);
         gameplayScene.add(mesh);
-        rp = otherPlayers[row.player_id] = { mesh, tribe: row.tribe_index, hp:100, weapon:null, armor:null, voteFor:null };
+        rp = otherPlayers[row.player_id] = { mesh, tribe: row.tribe_index, hp:100, weapon:null, armor:null, voteFor:null, targetX: row.x, targetZ: row.z };
       }
       if (rp.tribe !== row.tribe_index) {
         setPlayerMeshTribe(rp.mesh, row.tribe_index);
@@ -1774,9 +1775,12 @@
       }
       rp.hp = typeof row.hp === 'number' ? row.hp : rp.hp;
       rp.voteFor = row.vote_for || null;
-      const moveDx = row.x - rp.mesh.position.x, moveDz = row.z - rp.mesh.position.z;
+      // não plota direto na posição — só marca o alvo, e o loop de jogo desliza suave até lá a cada frame,
+      // em vez de "teleportar" toda vez que uma busca nova chega
+      const moveDx = row.x - rp.targetX, moveDz = row.z - rp.targetZ;
       if (Math.hypot(moveDx, moveDz) > 0.5) rp.mesh.rotation.y = Math.atan2(moveDx, moveDz);
-      rp.mesh.position.set(row.x, 0, row.z);
+      rp.targetX = row.x;
+      rp.targetZ = row.z;
     });
     Object.keys(otherPlayers).forEach(id => {
       if (!seen.has(id)) { gameplayScene.remove(otherPlayers[id].mesh); delete otherPlayers[id]; }
@@ -1798,6 +1802,17 @@
       console.log(`[Vulcanis] outros jogadores na região ${regionIndex}: ${rows.length} :: ${summary}`);
       applyOtherPlayersFromRows(rows);
     } catch (e) { console.warn('fetch other players falhou:', e); }
+  }
+
+  // desliza a posição visual dos outros jogadores em direção ao último alvo recebido, a cada frame —
+  // sem isso, cada busca nova (a cada poucos segundos) fazia o boneco "teleportar" de repente
+  function updateOtherPlayersInterpolation(dt){
+    const t = Math.min(1, dt * 6);
+    Object.values(otherPlayers).forEach(rp => {
+      if (rp.targetX == null) return;
+      rp.mesh.position.x += (rp.targetX - rp.mesh.position.x) * t;
+      rp.mesh.position.z += (rp.targetZ - rp.mesh.position.z) * t;
+    });
   }
 
   function clearOtherPlayers(){
@@ -1864,7 +1879,7 @@
   let previewCounts = { total:0, byTribe:[0,0,0,0] };
   let tribeSelectPollTimer = null;
   let dbHeartbeatTimer = 0;
-  const DB_HEARTBEAT_INTERVAL = 4; // segundos — também serve pra mostrar a posição dos outros (com lag)
+  const DB_HEARTBEAT_INTERVAL = 2.5; // segundos — também serve pra mostrar a posição dos outros (com lag, suavizado por interpolação)
 
   // eleição de líder: líder é só quem tem mais votos entre os presentes da tribo agora (recalculado ao
   // vivo, não fica "gravado"). Não liga mais nada sozinho — o vulcão decide tudo agora (ver abaixo).
@@ -3389,6 +3404,7 @@
   animate();
 
   function updateGameplay(dt){
+    updateOtherPlayersInterpolation(dt);
     let dx = 0, dz = 0;
     if (!openScreen && !plantMenuOpen && !offerMenuOpen && !warehouseMenuOpen) {
       if (keys['w'] || keys['arrowup'])    dz -= 1;
