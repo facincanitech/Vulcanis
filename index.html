@@ -274,7 +274,7 @@
 </head>
 <body>
 
-<div id="versionTag">VulcaniS — protótipo v0.32</div>
+<div id="versionTag">VulcaniS — protótipo v0.33</div>
 <div id="welcomeScreen">
   <h1>Bem-vindo a Vulcanis</h1>
   <div class="hint">Um mundo de tribos, evolução e um vulcão que nunca é 100% previsível.</div>
@@ -2556,15 +2556,6 @@
   function isEraUnlocked(eraIdx){
     return eraIdx === 0 || eraCompleted(eraIdx - 1);
   }
-  function hasToolNamed(substr){
-    for (const key in craftedCounts) {
-      if (craftedCounts[key] > 0) {
-        const toolName = key.split(':')[1];
-        if (toolName && toolName.includes(substr)) return true;
-      }
-    }
-    return false;
-  }
   function canCraft(tool){
     return Object.entries(tool.costs).every(([k,v]) => (inventory[k]||0) >= v);
   }
@@ -3077,12 +3068,13 @@
     });
     if (!target) { gatherWarnedNode = null; return; }
 
-    if (target.tool && !hasToolNamed(target.tool)) {
+    const equippedName = itemNameFromKey(equippedWeapon);
+    if (target.tool && !(equippedName && equippedName.includes(target.tool))) {
       gatherWarnTimer += dt;
       if (gatherWarnedNode !== target || gatherWarnTimer >= 2.5) {
         gatherWarnedNode = target;
         gatherWarnTimer = 0;
-        showGatherMsg(`Precisa de ${target.tool} pra coletar isso — desbloqueie em [T] e craft em [I]`);
+        showGatherMsg(`Precisa ter ${target.tool} equipado pra coletar isso — craft e equipe em [I]`);
       }
       return;
     }
@@ -3350,7 +3342,7 @@
     if (!openScreen && !plantMenuOpen && !offerMenuOpen) updateAutoGather(dt, isMoving);
     if (volcanoOfferCooldown > 0) volcanoOfferCooldown = Math.max(0, volcanoOfferCooldown - dt);
 
-    if (gatherState) {
+    if (gatherState && !openScreen && !plantMenuOpen && !offerMenuOpen) {
       const { node } = gatherState;
       if (!resourceNodes.includes(node) || player.position.distanceTo(node.mesh.position) > GATHER_RANGE) {
         cancelGather();
