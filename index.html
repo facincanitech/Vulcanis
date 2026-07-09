@@ -274,7 +274,7 @@
 </head>
 <body>
 
-<div id="versionTag">VulcaniS — protótipo v0.44</div>
+<div id="versionTag">VulcaniS — protótipo v0.45</div>
 <div id="welcomeScreen">
   <h1>Bem-vindo a Vulcanis</h1>
   <div class="hint">Um mundo de tribos, evolução e um vulcão que nunca é 100% previsível.</div>
@@ -2026,9 +2026,23 @@
     } catch (e) { console.warn('criar estado do vulcão falhou:', e); }
   }
 
+  // reset completo de uma rodada: vulcão volta pro calmo, pontos zeram, e as estruturas (fazenda/armazém/
+  // barricada) de todo mundo naquela região somem — "o jogo acabou", começa tudo do zero de novo
+  async function wipeRegionRound(regionIndex){
+    if (!sb || regionIndex == null) return;
+    const nowIso = new Date().toISOString();
+    try {
+      await sb.from('region_volcano').update({
+        state: 'calm', last_fed_at: nowIso, state_since: nowIso, simulation_started_at: nowIso, last_kill_at: null, updated_at: nowIso,
+      }).eq('region_index', regionIndex);
+      await sb.from('region_tribe_points').delete().eq('region_index', regionIndex);
+      await sb.from('region_structures').delete().eq('region_index', regionIndex);
+    } catch (e) { console.warn('resetar rodada da região falhou:', e); }
+  }
+
   // sem ninguém hospedando (região vazia), o relógio do vulcão fica parado — updated_at só é tocado
   // pelo host a cada tick (ver tickVolcanoAsHost). Se faz tempo que ninguém tocou, a região ficou vazia:
-  // reseta tudo pro estado calmo em vez de deixar o tempo "correr escondido" enquanto não tinha ninguém
+  // considera que "a partida acabou" e reseta tudo (vulcão, pontos e as estruturas do mapa)
   const VOLCANO_EMPTY_RESET_MS = 90*1000;
   async function resetVolcanoIfWasEmpty(regionIndex){
     if (!sb) return;
@@ -2036,10 +2050,7 @@
       const { data, error } = await sb.from('region_volcano').select('updated_at').eq('region_index', regionIndex).maybeSingle();
       if (error) throw error;
       if (!data || Date.now() - new Date(data.updated_at).getTime() < VOLCANO_EMPTY_RESET_MS) return;
-      const nowIso = new Date().toISOString();
-      await sb.from('region_volcano').update({
-        state: 'calm', last_fed_at: nowIso, state_since: nowIso, simulation_started_at: nowIso, last_kill_at: null, updated_at: nowIso,
-      }).eq('region_index', regionIndex);
+      await wipeRegionRound(regionIndex);
     } catch (e) { console.warn('resetar vulcão vazio falhou:', e); }
   }
 
@@ -2171,14 +2182,7 @@
   }
 
   async function resetVolcanoRound(){
-    if (!sb || currentRegionIndex == null) return;
-    const nowIso = new Date().toISOString();
-    try {
-      await sb.from('region_volcano').update({
-        state: 'calm', last_fed_at: nowIso, state_since: nowIso, simulation_started_at: nowIso, last_kill_at: null, updated_at: nowIso,
-      }).eq('region_index', currentRegionIndex);
-      await sb.from('region_tribe_points').delete().eq('region_index', currentRegionIndex);
-    } catch (e) { console.warn('resetar rodada do vulcão falhou:', e); }
+    await wipeRegionRound(currentRegionIndex);
   }
 
   // tick da simulação — só quem "hospeda" a região (mesma eleição usada pros bots) realmente decide algo;
